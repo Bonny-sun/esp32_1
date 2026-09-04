@@ -1,0 +1,55 @@
+# Render Blueprint — deploys BOTH services. Create via  New + -> Blueprint
+# (NOT "New + -> Web Service", which ignores this file forever).
+#
+# After first deploy, fill every  sync: false  var in each service's
+# Environment tab (Supabase + MQTT secrets).
+services:
+  # ---- MQTT -> Supabase ingest (always-on; needs a paid instance) ----
+  - type: worker
+    name: aquaponics-ingest
+    runtime: python
+    plan: starter
+    rootDir: worker
+    buildCommand: pip install -r requirements.txt
+    startCommand: python ingest.py
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+      - key: TZ
+        value: Asia/Taipei
+      - key: MQTT_HOST
+        sync: false
+      - key: MQTT_PORT
+        value: "8883"
+      - key: MQTT_USER
+        sync: false
+      - key: MQTT_PASS
+        sync: false
+      - key: MQTT_TOPIC
+        value: aquaponics/+/+/telemetry
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+
+  # ---- Streamlit dashboard (free web service; sleeps when idle) ----
+  - type: web
+    name: aquaponics-dashboard
+    runtime: python
+    plan: free
+    rootDir: dashboard
+    buildCommand: pip install -r requirements.txt
+    startCommand: streamlit run app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true --browser.gatherUsageStats false
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+      - key: TZ
+        value: Asia/Taipei
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: DASH_PASSWORD
+        sync: false

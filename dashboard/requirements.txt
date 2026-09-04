@@ -1,0 +1,5 @@
+streamlit>=1.38
+streamlit-autorefresh>=1.0
+supabase>=2.7,<3
+pandas>=2.2
+python-dotenv>=1.0
