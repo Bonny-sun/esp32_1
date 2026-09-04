@@ -53,3 +53,13 @@ services:
         sync: false
       - key: DASH_PASSWORD
         sync: false
+      # same HiveMQ creds as aquaponics-ingest — lets the dashboard publish
+      # pet-skin commands directly (see "外觀" section in app.py)
+      - key: MQTT_HOST
+        sync: false
+      - key: MQTT_PORT
+        value: "8883"
+      - key: MQTT_USER
+        sync: false
+      - key: MQTT_PASS
+        sync: false

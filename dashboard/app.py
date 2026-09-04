@@ -13,10 +13,14 @@
 """
 from __future__ import annotations
 
+import json
 import os
+import ssl
+import time
 from datetime import datetime, timedelta, timezone
 
 import pandas as pd
+import paho.mqtt.client as mqtt
 import streamlit as st
 from supabase import create_client
 
@@ -43,6 +47,12 @@ UNIT = {
     "ph": "",
     "soil_moisture": "%",
 }
+PET_LABEL = {"drop": "水滴", "fish": "魚", "cat": "貓"}   # value must match firmware's petSkinFromString()
+
+MQTT_HOST = os.environ.get("MQTT_HOST", "")
+MQTT_PORT = int(os.environ.get("MQTT_PORT", "8883"))
+MQTT_USER = os.environ.get("MQTT_USER", "")
+MQTT_PASS = os.environ.get("MQTT_PASS", "")
 
 st.set_page_config(page_title="魚菜共生監控", page_icon="\U0001f4a7", layout="centered")
 
@@ -121,6 +131,23 @@ def save_thresholds(device_id: str, edits: dict) -> None:
     _sb().table("aqua_thresholds").upsert(payload, on_conflict="device_id,metric").execute()
 
 
+def publish_pet_skin(site_id: str, device_id: str, skin: str) -> None:
+    """Publish a retained MQTT command the ESP32 applies immediately (no
+    reboot) and also persists to its own NVS. Retained so a currently
+    offline device picks it up the moment it reconnects. Short-lived
+    connection — this only runs inside a button click, not continuously."""
+    topic = f"aquaponics/{site_id}/{device_id}/cmd"
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"dash-{device_id}-{os.getpid()}")
+    client.username_pw_set(MQTT_USER, MQTT_PASS)
+    client.tls_set(tls_version=ssl.PROTOCOL_TLS_CLIENT)
+    client.connect(MQTT_HOST, MQTT_PORT, keepalive=10)
+    client.loop_start()
+    client.publish(topic, json.dumps({"pet": skin}), qos=1, retain=True)
+    time.sleep(0.3)   # give the publish time to flush before we tear the connection down
+    client.loop_stop()
+    client.disconnect()
+
+
 # ---------------------------------------------------------------- 介面
 st.title("\U0001f4a7 魚菜共生監控")
 
@@ -144,6 +171,25 @@ if last_seen:
     age = (datetime.now(timezone.utc) - seen).total_seconds()
     badge = "\U0001f7e2 上線" if age < 300 else f"\U0001f534 離線({int(age // 60)} 分鐘)"
     st.caption(f"{badge}  ·  最後上線 {seen.tz_convert(TZ):%Y-%m-%d %H:%M:%S}")
+
+# --- 虛擬寵物外觀 ---
+pet_keys = list(PET_LABEL.keys())
+current_pet = dev.get("pet_skin") or "drop"
+pc1, pc2 = st.columns([3, 1])
+picked_label = pc1.selectbox(
+    "虛擬寵物外觀", [PET_LABEL[k] for k in pet_keys],
+    index=pet_keys.index(current_pet) if current_pet in pet_keys else 0,
+)
+if not MQTT_HOST:
+    pc2.write("")
+    st.caption("尚未設定 MQTT_HOST 等環境變數，無法從這裡送出變更。")
+elif pc2.button("套用", key="apply_pet"):
+    picked_key = pet_keys[[PET_LABEL[k] for k in pet_keys].index(picked_label)]
+    try:
+        publish_pet_skin(dev.get("site_id", "default"), device_id, picked_key)
+        st.success(f"已送出「{picked_label}」，裝置上線後會立刻套用。")
+    except Exception as exc:
+        st.error(f"送出失敗：{exc}")
 
 # --- 即時數值 ---
 latest = load_latest(device_id)

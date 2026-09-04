@@ -18,7 +18,9 @@ Full pipeline deployed and running 24/7:
 - **Dashboard:** https://aquaponics-dashboard-bja1.onrender.com (Streamlit on Render, free tier — first load wakes it in ~30 s)
 - Firmware publishes one telemetry packet per minute; NTP clock on the OLED.
 - Wi-Fi / MQTT credentials are provisioned at runtime via the WiFiManager
-  captive portal (`AquaGuardian-Setup`), not baked into the firmware.
+  captive portal (`AquaGuardian-Setup`), not baked into the firmware. An
+  optional 2nd (backup) Wi-Fi SSID/password can also be set in the same
+  portal; the firmware fails over to it via WiFiMulti if the primary AP drops.
 - Supabase `pg_cron`: hourly rollup, 30-day raw retention, per-minute
   threshold alerting.
 

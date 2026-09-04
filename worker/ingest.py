@@ -89,16 +89,17 @@ def handle_payload(topic: str, raw: bytes) -> None:
             extra[k] = p[k]
     row["extra"] = extra
 
+    device_row = {
+        "device_id": device_id,
+        "site_id": p.get("site_id", "default"),
+        "fw_version": p.get("fw"),
+        "last_seen": _utcnow_iso(),
+    }
+    if "pet" in p:                        # what the firmware actually has applied
+        device_row["pet_skin"] = p["pet"]
+
     try:
-        sb.table("aqua_devices").upsert(
-            {
-                "device_id": device_id,
-                "site_id": p.get("site_id", "default"),
-                "fw_version": p.get("fw"),
-                "last_seen": _utcnow_iso(),
-            },
-            on_conflict="device_id",
-        ).execute()
+        sb.table("aqua_devices").upsert(device_row, on_conflict="device_id").execute()
         sb.table("aqua_telemetry").insert(row).execute()
         print(f"[ok] {device_id} T={row['temperature']} H={row['humidity']}", flush=True)
     except Exception as exc:              # keep the worker alive on any DB hiccup

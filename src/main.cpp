@@ -17,6 +17,9 @@
 //     a captive portal for Wi-Fi + MQTT creds. To force it manually: reset the
 //     board, then hold BOOT (GPIO0) within the first 3 s. secrets.h values are
 //     only compile-time DEFAULTS; the portal overrides them into NVS.
+//   * Backup Wi-Fi: the portal also takes an optional 2nd SSID/password
+//     (e.g. a phone hotspot). Both APs are handed to WiFiMulti; tickWiFi()
+//     retries whichever is in range if the primary drops.
 //
 //  Pixel pet note: the sprite is drawn procedurally (U8g2 primitives) instead of
 //  a baked XBM byte-array. Reasons: trivial to swap facial expressions, no
@@ -26,6 +29,7 @@
 
 #include <Arduino.h>
 #include <WiFi.h>
+#include <WiFiMulti.h>            // fallback: try backup SSID when primary AP is unreachable
 #include <WiFiClientSecure.h>
 #include <WiFiManager.h>          // captive-portal provisioning (tzapu)
 #include <Preferences.h>          // NVS storage for runtime MQTT config
@@ -101,6 +105,7 @@ DHT dht(PIN_DHT, DHT_TYPE);
 WiFiClientSecure netClient;
 PubSubClient     mqtt(netClient);
 WiFiManager      wm;
+WiFiMulti        wifiMulti;        // holds primary + backup AP so tickWiFi() can fall over
 Preferences      prefs;
 
 // Runtime MQTT config — loaded from NVS, falling back to secrets.h defaults.
@@ -109,19 +114,40 @@ uint16_t g_mqttPort = MQTT_PORT;
 String   g_mqttUser = MQTT_USER;
 String   g_mqttPass = MQTT_PASS;
 
+// Backup Wi-Fi (2nd AP) — set via the captive portal, stored in NVS. The
+// primary AP is still whatever WiFiManager's own SSID picker saved.
+String g_wifiSsid2 = "";
+String g_wifiPass2 = "";
+
 // Captive-portal custom fields
-WiFiManagerParameter p_host("host", "MQTT host", "", 64);
-WiFiManagerParameter p_port("port", "MQTT port", "", 6);
-WiFiManagerParameter p_user("user", "MQTT username", "", 32);
-WiFiManagerParameter p_pass("pass", "MQTT password", "", 64);
+WiFiManagerParameter p_host("host", "MQTT 主機位址", "", 64);
+WiFiManagerParameter p_port("port", "MQTT 連接埠", "", 6);
+WiFiManagerParameter p_user("user", "MQTT 帳號", "", 32);
+WiFiManagerParameter p_pass("pass", "MQTT 密碼（留空＝不變更）", "", 64);
+WiFiManagerParameter p_ssid2("ssid2", "備用 Wi-Fi 名稱（選填）", "", 32);
+WiFiManagerParameter p_pass2("pass2", "備用 Wi-Fi 密碼（留空＝不變更）", "", 64);
+
+// Pet skin picker: a raw-HTML <select> (no id) rather than the usual
+// id-based WiFiManagerParameter, because WiFiManager always wraps id-based
+// params in its <input> template — no way to get a <select> out of that.
+// Built at runtime in setup() (needs g_petSkin already loaded from NVS to
+// mark the right <option selected>), so the buffer must outlive setup();
+// a static array does that. Read back in saveParamsCallback() via
+// wm.server->arg("pet") since a no-id param never populates getValue().
+static char petSelectHtml[320];
+WiFiManagerParameter* p_petSelect = nullptr;
 
 char TOPIC_TELEMETRY[80];
 char TOPIC_STATUS[80];
+char TOPIC_CMD[80];        // subscribed; remote pet-skin changes (dashboard -> MQTT -> here)
 
 enum Mood { COMFY, HOT, COLD };
 Mood  g_mood = COMFY;
 float g_temp = NAN;
 float g_hum  = NAN;
+
+enum PetSkin { PET_DROP, PET_FISH, PET_CAT };
+PetSkin g_petSkin = PET_DROP;   // loaded from NVS ("pet"), set via the portal
 bool  g_timeSynced = false;
 uint32_t g_lastPublishFlash = 0;   // millis() of last MQTT publish (for LED blip)
 uint32_t g_bootMs = 0;
@@ -158,6 +184,20 @@ void localHHMM(char *buf, size_t n) {
   strftime(buf, n, "%H:%M", &t);
 }
 
+PetSkin petSkinFromString(const String& s) {
+  if (s == "fish") return PET_FISH;
+  if (s == "cat")  return PET_CAT;
+  return PET_DROP;
+}
+
+const char* petSkinToString(PetSkin s) {
+  switch (s) {
+    case PET_FISH: return "fish";
+    case PET_CAT:  return "cat";
+    default:       return "drop";
+  }
+}
+
 // ---- Runtime MQTT config (NVS <- portal, defaults <- secrets.h) --------
 void loadMqttConfig() {
   prefs.begin("aqua", true);                       // read-only
@@ -165,6 +205,9 @@ void loadMqttConfig() {
   g_mqttPort = prefs.getUShort("port", MQTT_PORT);
   g_mqttUser = prefs.getString("user", MQTT_USER);
   g_mqttPass = prefs.getString("pass", MQTT_PASS);
+  g_wifiSsid2 = prefs.getString("ssid2", "");
+  g_wifiPass2 = prefs.getString("pass2", "");
+  g_petSkin = petSkinFromString(prefs.getString("pet", "drop"));
   prefs.end();
 }
 
@@ -175,6 +218,13 @@ void saveParamsCallback() {
   if (strlen(p_port.getValue())) prefs.putUShort("port", (uint16_t)atoi(p_port.getValue()));
   if (strlen(p_user.getValue())) prefs.putString("user", p_user.getValue());
   if (strlen(p_pass.getValue())) prefs.putString("pass", p_pass.getValue());
+  if (strlen(p_ssid2.getValue())) prefs.putString("ssid2", p_ssid2.getValue());
+  if (strlen(p_pass2.getValue())) prefs.putString("pass2", p_pass2.getValue());
+  // p_petSelect has no id (it's a raw <select>, see its declaration above),
+  // so WiFiManager never captures its value into a getValue() buffer —
+  // read the submitted "pet" field straight off the live request instead.
+  String pet = wm.server->arg("pet");
+  if (pet.length()) prefs.putString("pet", pet);
   prefs.end();
   Serial.println("[CFG] saved — restarting");
   delay(300);
@@ -198,8 +248,13 @@ void updateMood(float t) {
 }
 
 // ============================ Pixel pet (left 48x48) =====================
+// Three interchangeable skins, picked via the portal's "虛擬寵物外觀"
+// dropdown (see p_petSelect) and persisted in NVS as g_petSkin. Each is a
+// self-contained draw function so they can diverge freely; drawPet() just
+// dispatches to whichever is active. All must leave the draw color at 1
+// (white) on exit — drawStats() right after assumes that starting state.
 
-void drawPet() {
+void drawPetDrop() {
   const bool blink = (millis() % 4000) < 150;
   int dx = 0;
   if (g_mood == COLD) dx = ((millis() / 70) % 2) ? -1 : 1;   // shiver jitter
@@ -253,6 +308,119 @@ void drawPet() {
   } else if (g_mood == COLD) {
     u8g2.drawLine(2, 24, 6, 22);  u8g2.drawLine(2, 28, 6, 26);   // shiver marks
     u8g2.drawLine(40, 24, 44, 26); u8g2.drawLine(40, 28, 44, 30);
+  }
+}
+
+void drawPetFish() {
+  const bool blink = (millis() % 4000) < 150;
+  int dy = 0;
+  if (g_mood == COLD) dy = ((millis() / 70) % 2) ? -1 : 1;   // shiver jitter (bob)
+  const int cx = 24;
+  const int cy = 26 + dy;
+
+  // --- body: oval + tail fin (facing right) + dorsal fin ---
+  u8g2.setDrawColor(1);
+  u8g2.drawTriangle(cx - 14, cy - 8, cx - 14, cy + 8, cx - 24, cy);       // tail fin
+  u8g2.drawFilledEllipse(cx, cy, 15, 11);                                 // body
+  u8g2.drawTriangle(cx - 2, cy - 11, cx + 6, cy - 11, cx + 2, cy - 18);   // dorsal fin
+
+  // --- face features punched in black on the white body ---
+  u8g2.setDrawColor(0);
+
+  // eyes
+  if (g_mood == HOT) {                         // dizzy X eyes
+    u8g2.drawLine(cx - 9, cy - 5, cx - 4, cy);   u8g2.drawLine(cx - 9, cy,     cx - 4, cy - 5);
+    u8g2.drawLine(cx + 3, cy - 5, cx + 8, cy);   u8g2.drawLine(cx + 3, cy,     cx + 8, cy - 5);
+  } else if (g_mood == COLD) {                 // squinting  u_u
+    u8g2.drawLine(cx - 9, cy - 3, cx - 6, cy);   u8g2.drawLine(cx - 6, cy,     cx - 3, cy - 3);
+    u8g2.drawLine(cx + 3, cy - 3, cx + 6, cy);   u8g2.drawLine(cx + 6, cy,     cx + 9, cy - 3);
+  } else if (blink) {                          // COMFY blink
+    u8g2.drawHLine(cx - 9, cy - 2, 6);
+    u8g2.drawHLine(cx + 3, cy - 2, 6);
+  } else {                                     // COMFY open eyes
+    u8g2.drawDisc(cx - 6, cy - 2, 2);
+    u8g2.drawDisc(cx + 6, cy - 2, 2);
+  }
+
+  // mouth: fish always looks a little "o" surprised
+  if (g_mood == HOT) {
+    u8g2.drawDisc(cx, cy + 6, 3);
+  } else if (g_mood == COLD) {
+    u8g2.drawBox(cx - 3, cy + 5, 6, 3);
+  } else {
+    u8g2.drawDisc(cx, cy + 6, 2);
+  }
+
+  // --- extras (white) ---
+  u8g2.setDrawColor(1);
+  if (g_mood == HOT) {
+    int sy = 4 + (int)((millis() / 150) % 8);          // rising bubble
+    u8g2.drawDisc(cx + 18, sy, 2);
+  } else if (g_mood == COLD) {
+    u8g2.drawLine(2, 20, 6, 18);  u8g2.drawLine(2, 24, 6, 22);   // shiver marks
+    u8g2.drawLine(40, 20, 44, 22); u8g2.drawLine(40, 24, 44, 26);
+  }
+}
+
+void drawPetCat() {
+  const bool blink = (millis() % 4000) < 150;
+  int dx = 0;
+  if (g_mood == COLD) dx = ((millis() / 70) % 2) ? -1 : 1;   // shiver jitter
+  const int cx = 23 + dx;
+  const int cy = 30;
+
+  // --- round head + pointed ears ---
+  u8g2.setDrawColor(1);
+  u8g2.drawTriangle(cx - 14, 18, cx - 5, 12, cx - 11, 2);    // left ear
+  u8g2.drawTriangle(cx + 14, 18, cx + 5, 12, cx + 11, 2);    // right ear
+  u8g2.drawDisc(cx, cy, 15);
+
+  // --- face features punched in black on the white head ---
+  u8g2.setDrawColor(0);
+
+  // eyes
+  if (g_mood == HOT) {                         // dizzy X eyes
+    u8g2.drawLine(cx - 9, cy - 3, cx - 4, cy + 2); u8g2.drawLine(cx - 9, cy + 2, cx - 4, cy - 3);
+    u8g2.drawLine(cx + 4, cy - 3, cx + 9, cy + 2); u8g2.drawLine(cx + 4, cy + 2, cx + 9, cy - 3);
+  } else if (g_mood == COLD) {                 // squinting  u_u
+    u8g2.drawLine(cx - 9, cy - 1, cx - 6, cy + 2); u8g2.drawLine(cx - 6, cy + 2, cx - 3, cy - 1);
+    u8g2.drawLine(cx + 3, cy - 1, cx + 6, cy + 2); u8g2.drawLine(cx + 6, cy + 2, cx + 9, cy - 1);
+  } else if (blink) {                          // COMFY blink
+    u8g2.drawHLine(cx - 9, cy, 6);
+    u8g2.drawHLine(cx + 3, cy, 6);
+  } else {                                     // COMFY open eyes
+    u8g2.drawDisc(cx - 6, cy, 2);
+    u8g2.drawDisc(cx + 6, cy, 2);
+  }
+
+  // mouth: little "w" — same for every mood, the ears/whiskers carry the look
+  u8g2.drawLine(cx - 5, cy + 8, cx,     cy + 5);
+  u8g2.drawLine(cx,     cy + 5, cx + 5, cy + 8);
+
+  // --- whiskers + tail: always on, outside the head (white) ---
+  u8g2.setDrawColor(1);
+  u8g2.drawLine(cx - 21, cy - 3, cx - 12, cy - 4);
+  u8g2.drawLine(cx - 21, cy + 1, cx - 12, cy + 1);
+  u8g2.drawLine(cx + 21, cy - 3, cx + 12, cy - 4);
+  u8g2.drawLine(cx + 21, cy + 1, cx + 12, cy + 1);
+  u8g2.drawLine(cx + 12, cy + 13, cx + 20, cy + 15);   // tail curl
+  u8g2.drawLine(cx + 20, cy + 15, cx + 22, cy + 8);
+
+  // --- mood extras (white) ---
+  u8g2.setDrawColor(1);
+  if (g_mood == HOT) {
+    int sy = 2 + (int)((millis() / 150) % 6);          // sweat drop
+    u8g2.drawDisc(cx + 16, sy, 2);
+  } else if (g_mood == COLD) {
+    u8g2.drawLine(2, 26, 6, 24);  u8g2.drawLine(2, 30, 6, 28);   // shiver marks
+  }
+}
+
+void drawPet() {
+  switch (g_petSkin) {
+    case PET_FISH: drawPetFish(); break;
+    case PET_CAT:  drawPetCat();  break;
+    default:       drawPetDrop(); break;
   }
 }
 
@@ -387,6 +555,8 @@ void publishTelemetry() {
   net["rssi"] = WiFi.RSSI();
   net["ip"]   = WiFi.localIP().toString();
 
+  doc["pet"] = petSkinToString(g_petSkin);  // lets the dashboard show what's actually applied
+
   char payload[384];
   size_t n = serializeJson(doc, payload, sizeof(payload));
   bool ok = mqtt.publish(TOPIC_TELEMETRY, (const uint8_t*)payload, n, false);
@@ -406,6 +576,7 @@ void tickPublish() {
 
 void tickWiFi() {
   static uint32_t downSince = 0;
+  static uint32_t lastRetry = 0;
   wm.process();                          // services the captive portal when active; no-op otherwise
 
   if (WiFi.status() == WL_CONNECTED) {
@@ -416,7 +587,15 @@ void tickWiFi() {
     }
     return;
   }
-  // Not connected: WiFiManager + the ESP32 core auto-reconnect to the saved AP.
+  // Not connected: the ESP32 core auto-reconnects to the saved primary AP; if a
+  // backup SSID was set via the portal, wifiMulti additionally retries that one
+  // (whichever AP is in range wins). This call can briefly stall (short scan),
+  // so it's throttled like the MQTT retry below rather than run every loop().
+  if (!wm.getConfigPortalActive() && millis() - lastRetry > WIFI_RETRY_MS) {
+    lastRetry = millis();
+    if (g_wifiSsid2.length()) wifiMulti.run(WIFI_RETRY_MS);
+  }
+
   // If Wi-Fi stays down for a long stretch, reopen the portal so creds can be
   // fixed on-site without a laptop.
   if (downSince == 0) downSince = millis();
@@ -425,6 +604,22 @@ void tickWiFi() {
     wm.startConfigPortal(AP_NAME, AP_PASSWORD);
     downSince = 0;
   }
+}
+
+// Remote pet-skin change: dashboard publishes a retained {"pet":"cat"} to
+// TOPIC_CMD. Applied live (no reboot — drawPet() just reads g_petSkin every
+// frame) and persisted to NVS so it also survives one.
+void mqttCallback(char* topic, byte* payload, unsigned int len) {
+  JsonDocument doc;
+  if (deserializeJson(doc, payload, len)) return;   // malformed, ignore
+  if (doc["pet"].isNull()) return;
+
+  PetSkin skin = petSkinFromString(doc["pet"].as<String>());
+  g_petSkin = skin;
+  prefs.begin("aqua", false);
+  prefs.putString("pet", petSkinToString(skin));
+  prefs.end();
+  Serial.printf("[MQTT] pet skin -> %s\n", petSkinToString(skin));
 }
 
 void tickMqtt() {
@@ -440,6 +635,7 @@ void tickMqtt() {
                          TOPIC_STATUS, 1, true, "{\"online\":false}");
   if (ok) {
     mqtt.publish(TOPIC_STATUS, "{\"online\":true}", true);   // retained
+    mqtt.subscribe(TOPIC_CMD);
     Serial.println("[MQTT] connected");
   } else {
     Serial.printf("[MQTT] failed, rc=%d\n", mqtt.state());
@@ -457,6 +653,7 @@ void setup() {
 
   snprintf(TOPIC_TELEMETRY, sizeof(TOPIC_TELEMETRY), "aquaponics/%s/%s/telemetry", SITE_ID, DEVICE_ID);
   snprintf(TOPIC_STATUS,    sizeof(TOPIC_STATUS),    "aquaponics/%s/%s/status",    SITE_ID, DEVICE_ID);
+  snprintf(TOPIC_CMD,       sizeof(TOPIC_CMD),       "aquaponics/%s/%s/cmd",       SITE_ID, DEVICE_ID);
 
   // RGB PWM
   ledcSetup(CH_R, LED_FREQ, LED_RES); ledcAttachPin(PIN_LED_R, CH_R);
@@ -485,16 +682,37 @@ void setup() {
     p_host.setValue(g_mqttHost.c_str(), 64);
     p_port.setValue(portStr, 6);
     p_user.setValue(g_mqttUser.c_str(), 32);
-    // password field intentionally left blank in the form
+    // password fields intentionally left blank in the form
+    p_ssid2.setValue(g_wifiSsid2.c_str(), 32);
+  }
+  {
+    // Built here (after g_petSkin is loaded) so the right <option> starts
+    // pre-selected. petSelectHtml is static, so this pointer stays valid
+    // for the portal's whole lifetime.
+    snprintf(petSelectHtml, sizeof(petSelectHtml),
+      "<br/><label>虛擬寵物外觀</label><br/>"
+      "<select name='pet'>"
+      "<option value='drop' %s>水滴</option>"
+      "<option value='fish' %s>魚</option>"
+      "<option value='cat' %s>貓</option>"
+      "</select><br/>",
+      g_petSkin == PET_DROP ? "selected" : "",
+      g_petSkin == PET_FISH ? "selected" : "",
+      g_petSkin == PET_CAT  ? "selected" : "");
+    p_petSelect = new WiFiManagerParameter(petSelectHtml);
   }
   wm.addParameter(&p_host);
   wm.addParameter(&p_port);
   wm.addParameter(&p_user);
   wm.addParameter(&p_pass);
+  wm.addParameter(&p_ssid2);
+  wm.addParameter(&p_pass2);
+  wm.addParameter(p_petSelect);
   wm.setSaveParamsCallback(saveParamsCallback);
   wm.setConfigPortalBlocking(false);              // portal runs from loop() via wm.process()
   wm.setConfigPortalTimeout(PORTAL_TIMEOUT_S);
   wm.setClass("invert");                          // dark portal UI
+  wm.setTitle("AquaGuardian 設定");                // browser tab title + page header
 
   // Portal trigger: hold BOOT for 3 s AFTER power-on (holding it DURING reset
   // enters the ROM bootloader, so we sample it here once the app is running).
@@ -517,11 +735,23 @@ void setup() {
     wm.autoConnect(AP_NAME, AP_PASSWORD);         // connect to saved AP, or open portal if none
   }
 
+  // Register both APs with wifiMulti so tickWiFi() can fail over to the
+  // backup network later. WiFi.psk() reads back the primary's passphrase
+  // that the ESP32 core just saved to NVS (Arduino-ESP32 extension, not
+  // available on plain WiFiSTAClass elsewhere).
+  if (WiFi.status() == WL_CONNECTED) {
+    wifiMulti.addAP(WiFi.SSID().c_str(), WiFi.psk().c_str());
+  }
+  if (g_wifiSsid2.length()) {
+    wifiMulti.addAP(g_wifiSsid2.c_str(), g_wifiPass2.c_str());
+  }
+
   // TLS: skip cert validation for first bring-up.
   // For production pin the CA:  netClient.setCACert(HIVEMQ_ROOT_CA);
   netClient.setInsecure();
 
   mqtt.setServer(g_mqttHost.c_str(), g_mqttPort);
+  mqtt.setCallback(mqttCallback);
   mqtt.setBufferSize(512);
   mqtt.setKeepAlive(30);
 
