@@ -47,7 +47,7 @@ UNIT = {
     "ph": "",
     "soil_moisture": "%",
 }
-PET_LABEL = {"drop": "水滴", "fish": "魚", "cat": "貓"}   # value must match firmware's petSkinFromString()
+PET_LABEL = {"drop": "水滴", "fish": "魚", "cat": "貓", "panda": "熊貓"}   # value must match firmware's petSkinFromString()
 
 MQTT_HOST = os.environ.get("MQTT_HOST", "")
 MQTT_PORT = int(os.environ.get("MQTT_PORT", "8883"))

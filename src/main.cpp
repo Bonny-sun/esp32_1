@@ -146,7 +146,7 @@ Mood  g_mood = COMFY;
 float g_temp = NAN;
 float g_hum  = NAN;
 
-enum PetSkin { PET_DROP, PET_FISH, PET_CAT };
+enum PetSkin { PET_DROP, PET_FISH, PET_CAT, PET_PANDA };
 PetSkin g_petSkin = PET_DROP;   // loaded from NVS ("pet"), set via the portal
 bool  g_timeSynced = false;
 uint32_t g_lastPublishFlash = 0;   // millis() of last MQTT publish (for LED blip)
@@ -185,16 +185,18 @@ void localHHMM(char *buf, size_t n) {
 }
 
 PetSkin petSkinFromString(const String& s) {
-  if (s == "fish") return PET_FISH;
-  if (s == "cat")  return PET_CAT;
+  if (s == "fish")  return PET_FISH;
+  if (s == "cat")   return PET_CAT;
+  if (s == "panda") return PET_PANDA;
   return PET_DROP;
 }
 
 const char* petSkinToString(PetSkin s) {
   switch (s) {
-    case PET_FISH: return "fish";
-    case PET_CAT:  return "cat";
-    default:       return "drop";
+    case PET_FISH:  return "fish";
+    case PET_CAT:   return "cat";
+    case PET_PANDA: return "panda";
+    default:        return "drop";
   }
 }
 
@@ -367,60 +369,127 @@ void drawPetCat() {
   int dx = 0;
   if (g_mood == COLD) dx = ((millis() / 70) % 2) ? -1 : 1;   // shiver jitter
   const int cx = 23 + dx;
-  const int cy = 30;
+  const int cy = 31;
 
-  // --- round head + pointed ears ---
+  // --- round head + ears with a hollow "inner ear" notch ---
   u8g2.setDrawColor(1);
-  u8g2.drawTriangle(cx - 14, 18, cx - 5, 12, cx - 11, 2);    // left ear
-  u8g2.drawTriangle(cx + 14, 18, cx + 5, 12, cx + 11, 2);    // right ear
-  u8g2.drawDisc(cx, cy, 15);
-
-  // --- face features punched in black on the white head ---
+  u8g2.drawTriangle(cx - 15, 18, cx - 5, 11, cx - 12, 2);    // left outer ear
+  u8g2.drawTriangle(cx + 15, 18, cx + 5, 11, cx + 12, 2);    // right outer ear
+  u8g2.drawDisc(cx, cy, 14);
   u8g2.setDrawColor(0);
+  u8g2.drawTriangle(cx - 11, 16, cx - 6, 12, cx - 9, 6);     // left inner ear
+  u8g2.drawTriangle(cx + 11, 16, cx + 6, 12, cx + 9, 6);     // right inner ear
 
-  // eyes
+  // --- face features, also punched in black on the white head ---
+  // eyes — bigger and rounder reads cuter than the other skins' eyes
   if (g_mood == HOT) {                         // dizzy X eyes
-    u8g2.drawLine(cx - 9, cy - 3, cx - 4, cy + 2); u8g2.drawLine(cx - 9, cy + 2, cx - 4, cy - 3);
-    u8g2.drawLine(cx + 4, cy - 3, cx + 9, cy + 2); u8g2.drawLine(cx + 4, cy + 2, cx + 9, cy - 3);
+    u8g2.drawLine(cx - 10, cy - 5, cx - 4, cy + 1); u8g2.drawLine(cx - 10, cy + 1, cx - 4, cy - 5);
+    u8g2.drawLine(cx + 4,  cy - 5, cx + 10, cy + 1); u8g2.drawLine(cx + 4,  cy + 1, cx + 10, cy - 5);
   } else if (g_mood == COLD) {                 // squinting  u_u
-    u8g2.drawLine(cx - 9, cy - 1, cx - 6, cy + 2); u8g2.drawLine(cx - 6, cy + 2, cx - 3, cy - 1);
-    u8g2.drawLine(cx + 3, cy - 1, cx + 6, cy + 2); u8g2.drawLine(cx + 6, cy + 2, cx + 9, cy - 1);
+    u8g2.drawLine(cx - 10, cy - 1, cx - 7, cy + 2); u8g2.drawLine(cx - 7, cy + 2, cx - 4, cy - 1);
+    u8g2.drawLine(cx + 4,  cy - 1, cx + 7, cy + 2); u8g2.drawLine(cx + 7, cy + 2, cx + 10, cy - 1);
   } else if (blink) {                          // COMFY blink
-    u8g2.drawHLine(cx - 9, cy, 6);
-    u8g2.drawHLine(cx + 3, cy, 6);
+    u8g2.drawHLine(cx - 10, cy - 2, 7);
+    u8g2.drawHLine(cx + 3,  cy - 2, 7);
   } else {                                     // COMFY open eyes
-    u8g2.drawDisc(cx - 6, cy, 2);
-    u8g2.drawDisc(cx + 6, cy, 2);
+    u8g2.drawDisc(cx - 7, cy - 2, 3);
+    u8g2.drawDisc(cx + 7, cy - 2, 3);
   }
 
-  // mouth: little "w" — same for every mood, the ears/whiskers carry the look
-  u8g2.drawLine(cx - 5, cy + 8, cx,     cy + 5);
-  u8g2.drawLine(cx,     cy + 5, cx + 5, cy + 8);
+  // tiny nose + "ω" mouth with curled corners — reads much cuter than a flat line
+  u8g2.drawDisc(cx, cy + 3, 1);
+  u8g2.drawLine(cx, cy + 5, cx - 4, cy + 9); u8g2.drawLine(cx - 4, cy + 9, cx - 7, cy + 6);
+  u8g2.drawLine(cx, cy + 5, cx + 4, cy + 9); u8g2.drawLine(cx + 4, cy + 9, cx + 7, cy + 6);
 
   // --- whiskers + tail: always on, outside the head (white) ---
   u8g2.setDrawColor(1);
-  u8g2.drawLine(cx - 21, cy - 3, cx - 12, cy - 4);
-  u8g2.drawLine(cx - 21, cy + 1, cx - 12, cy + 1);
-  u8g2.drawLine(cx + 21, cy - 3, cx + 12, cy - 4);
-  u8g2.drawLine(cx + 21, cy + 1, cx + 12, cy + 1);
-  u8g2.drawLine(cx + 12, cy + 13, cx + 20, cy + 15);   // tail curl
-  u8g2.drawLine(cx + 20, cy + 15, cx + 22, cy + 8);
+  u8g2.drawLine(cx - 19, cy - 1, cx - 12, cy - 2);
+  u8g2.drawLine(cx - 19, cy + 2, cx - 12, cy + 2);
+  u8g2.drawLine(cx + 19, cy - 1, cx + 12, cy - 2);
+  u8g2.drawLine(cx + 19, cy + 2, cx + 12, cy + 2);
+  u8g2.drawLine(cx + 11, cy + 14, cx + 19, cy + 16);   // tail curl
+  u8g2.drawLine(cx + 19, cy + 16, cx + 21, cy + 9);
 
   // --- mood extras (white) ---
   u8g2.setDrawColor(1);
   if (g_mood == HOT) {
     int sy = 2 + (int)((millis() / 150) % 6);          // sweat drop
+    u8g2.drawDisc(cx + 15, sy, 2);
+  } else if (g_mood == COLD) {
+    u8g2.drawLine(2, cy - 5, 6, cy - 7);  u8g2.drawLine(2, cy - 1, 6, cy - 3);   // shiver marks
+  }
+}
+
+void drawPetPanda() {
+  const bool blink = (millis() % 4000) < 150;
+  int dx = 0;
+  if (g_mood == COLD) dx = ((millis() / 70) % 2) ? -1 : 1;   // shiver jitter
+  const int cx = 23 + dx;
+  const int cy = 30;
+
+  // --- round ears: white ring so the black fill still reads against the
+  // black background, like a cutout — round beats pointy for "cute" here ---
+  u8g2.setDrawColor(1);
+  u8g2.drawDisc(cx, cy, 15);                      // head
+  u8g2.drawCircle(cx - 13, 12, 8);
+  u8g2.drawCircle(cx + 13, 12, 8);
+  u8g2.setDrawColor(0);
+  u8g2.drawDisc(cx - 13, 12, 7);
+  u8g2.drawDisc(cx + 13, 12, 7);
+
+  // --- eye patches: panda's signature black almond marks. Mood expression
+  // is drawn in white INSIDE each patch (inverted from the other skins). ---
+  u8g2.setDrawColor(0);
+  u8g2.drawFilledEllipse(cx - 8, cy - 3, 5, 7);
+  u8g2.drawFilledEllipse(cx + 8, cy - 3, 5, 7);
+  u8g2.drawDisc(cx, cy + 6, 1);                   // nose
+
+  u8g2.setDrawColor(1);
+  if (g_mood == HOT) {                            // dizzy X eyes
+    u8g2.drawLine(cx - 11, cy - 6, cx - 5, cy);     u8g2.drawLine(cx - 11, cy,     cx - 5, cy - 6);
+    u8g2.drawLine(cx + 5,  cy - 6, cx + 11, cy);     u8g2.drawLine(cx + 5,  cy,     cx + 11, cy - 6);
+  } else if (g_mood == COLD) {                    // squinting  ^ ^
+    u8g2.drawLine(cx - 11, cy - 1, cx - 8, cy - 4); u8g2.drawLine(cx - 8, cy - 4, cx - 5, cy - 1);
+    u8g2.drawLine(cx + 5,  cy - 1, cx + 8, cy - 4); u8g2.drawLine(cx + 8, cy - 4, cx + 11, cy - 1);
+  } else if (blink) {                             // COMFY blink
+    u8g2.drawHLine(cx - 11, cy - 3, 6);
+    u8g2.drawHLine(cx + 5,  cy - 3, 6);
+  } else {                                        // COMFY open eyes
+    u8g2.drawDisc(cx - 8, cy - 3, 2);
+    u8g2.drawDisc(cx + 8, cy - 3, 2);
+  }
+
+  // mouth
+  u8g2.setDrawColor(0);
+  if (g_mood == HOT) {
+    u8g2.drawDisc(cx, cy + 10, 3);                 // panting open mouth
+  } else if (g_mood == COLD) {
+    u8g2.drawBox(cx - 3, cy + 9, 6, 3);             // chattering mouth block
+    u8g2.setDrawColor(1);
+    u8g2.drawVLine(cx - 1, cy + 9, 3);
+    u8g2.drawVLine(cx + 1, cy + 9, 3);
+  } else {
+    u8g2.drawLine(cx - 4, cy + 10, cx,     cy + 13);  // gentle smile
+    u8g2.drawLine(cx,     cy + 13, cx + 4, cy + 10);
+  }
+
+  // --- extras outside the body (white) ---
+  u8g2.setDrawColor(1);
+  if (g_mood == HOT) {
+    int sy = 2 + (int)((millis() / 150) % 8);
     u8g2.drawDisc(cx + 16, sy, 2);
   } else if (g_mood == COLD) {
-    u8g2.drawLine(2, 26, 6, 24);  u8g2.drawLine(2, 30, 6, 28);   // shiver marks
+    u8g2.drawLine(2, cy - 6, 6, cy - 8);  u8g2.drawLine(2, cy - 2, 6, cy - 4);
+    u8g2.drawLine(40, cy - 6, 44, cy - 4); u8g2.drawLine(40, cy - 2, 44, cy);
   }
 }
 
 void drawPet() {
   switch (g_petSkin) {
-    case PET_FISH: drawPetFish(); break;
-    case PET_CAT:  drawPetCat();  break;
-    default:       drawPetDrop(); break;
+    case PET_FISH:  drawPetFish();  break;
+    case PET_CAT:   drawPetCat();   break;
+    case PET_PANDA: drawPetPanda(); break;
+    default:        drawPetDrop();  break;
   }
 }
 
@@ -695,10 +764,12 @@ void setup() {
       "<option value='drop' %s>水滴</option>"
       "<option value='fish' %s>魚</option>"
       "<option value='cat' %s>貓</option>"
+      "<option value='panda' %s>熊貓</option>"
       "</select><br/>",
-      g_petSkin == PET_DROP ? "selected" : "",
-      g_petSkin == PET_FISH ? "selected" : "",
-      g_petSkin == PET_CAT  ? "selected" : "");
+      g_petSkin == PET_DROP  ? "selected" : "",
+      g_petSkin == PET_FISH  ? "selected" : "",
+      g_petSkin == PET_CAT   ? "selected" : "",
+      g_petSkin == PET_PANDA ? "selected" : "");
     p_petSelect = new WiFiManagerParameter(petSelectHtml);
   }
   wm.addParameter(&p_host);
