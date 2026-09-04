@@ -9,6 +9,19 @@ light, MQTT → Supabase, baseline ML.
 **Phase 2 (planned):** water temperature (DS18B20), pH (DFRobot SEN0161-V2),
 soil moisture — the data model and feature pipeline already have slots for them.
 
+## Status — live (2026-09-04)
+
+Full pipeline deployed and running 24/7:
+
+`ESP32` → `HiveMQ Cloud` → `Render worker (aquaponics-ingest)` → `Supabase`
+
+- **Dashboard:** https://aquaponics-dashboard-bja1.onrender.com (Streamlit on Render, free tier — first load wakes it in ~30 s)
+- Firmware publishes one telemetry packet per minute; NTP clock on the OLED.
+- Wi-Fi / MQTT credentials are provisioned at runtime via the WiFiManager
+  captive portal (`AquaGuardian-Setup`), not baked into the firmware.
+- Supabase `pg_cron`: hourly rollup, 30-day raw retention, per-minute
+  threshold alerting.
+
 ## Stack
 
 | Layer | Tech |

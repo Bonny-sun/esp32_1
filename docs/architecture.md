@@ -141,7 +141,7 @@ every 15 min once there is a day or two of data.
 |---|---|
 | Render containers run in **UTC** (naive `datetime.now()` off by 8 h) | `TZ=Asia/Taipei` in `render.yaml`; code uses `datetime.now(timezone.utc)` explicitly; DB columns are `timestamptz` |
 | Supabase **direct** connection is IPv6-only → `psycopg2 Network is unreachable` | worker uses the HTTPS PostgREST API (supabase-py), not psycopg2. If switching: use the IPv4 **pooler** string |
-| Supabase pauses a project after **7 days** with zero connections | the worker holds a persistent MQTT link and writes every 15 s → never idle |
+| Supabase pauses a project after **7 days** with zero connections | the worker holds a persistent MQTT link and writes every 60 s → never idle |
 | Supabase free storage cap **500 MB** (~200 MB/device/year raw) | hourly rollup + 30-day raw retention via `pg_cron`; raise publish interval to 30–60 s if needed |
 | Render Background Workers are **paid** | on the purchased plan (`plan: starter`) |
 
@@ -154,9 +154,25 @@ every 15 min once there is a day or two of data.
 * **2026-09-03** — Broker: HiveMQ Cloud Serverless. Ingest: Python worker on
   Render (paid plan) rather than a broker→webhook bridge, to keep a
   writeable "backend service" artifact in the portfolio.
-* **2026-09-04** — DB: dedicated Supabase project in a **new free org**;
-  `aqua_` table prefix keeps the option of sharing open. Schema shape:
+* **2026-09-04** — DB: the "new free org" trick is dead (Supabase enforces the
+  2-project limit **per account** now). Reused the existing `auto-stock-picker`
+  project instead; the `aqua_` table prefix keeps it isolated. Schema shape:
   wide + `extra jsonb`.
 * **2026-09-04** — Pixel pet drawn procedurally (U8g2 primitives), not a baked
   XBM array — easier expression swaps, less flash, `tools/png_to_xbm.py` left
   as the path to hand-drawn art later.
+* **2026-09-04** — Publish interval set to 60 s (≈1440 rows/day) — plenty for
+  slow-moving environment data and lighter on the shared 500 MB.
+* **2026-09-04** — Added WiFiManager captive-portal provisioning so Wi-Fi/MQTT
+  creds can be changed on-site without a laptop (auto-opens on >2 min Wi-Fi
+  loss, or hold BOOT 3 s after reset). `min_spiffs` partition for the extra
+  flash. Setup AP carries a WPA2 password (`aquaguardian`) — open APs are
+  unreliable on Android.
+* **2026-09-04** — **Deployed.** Render Blueprint `ESP32_1` → `aquaponics-ingest`
+  (worker, Starter) + `aquaponics-dashboard` (web, free) in **us-oregon**.
+  Dashboard: https://aquaponics-dashboard-bja1.onrender.com . Cross-region to
+  Supabase (ap-southeast) adds ~200 ms/query — acceptable; optional fix is
+  `region: singapore` in `render.yaml`.
+* **2026-09-04** — Timestamp parsing: `aqua_telemetry.ts` mixes microsecond
+  (DB default `now()`) and second (device NTP) precision; dashboard + analysis
+  parse with `pd.to_datetime(..., format="ISO8601")`.
