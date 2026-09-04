@@ -73,7 +73,7 @@ def load_history(device_id: str, hours: int) -> pd.DataFrame:
     df = pd.DataFrame(res.data)
     if df.empty:
         return df
-    df["ts"] = pd.to_datetime(df["ts"], utc=True)
+    df["ts"] = pd.to_datetime(df["ts"], utc=True, format="ISO8601")
     return df.set_index("ts").sort_index()
 
 

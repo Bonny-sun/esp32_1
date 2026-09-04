@@ -84,7 +84,7 @@ def load_history(device_id: str, hours: int) -> pd.DataFrame:
     df = pd.DataFrame(rows)
     if df.empty:
         return df
-    df[tcol] = pd.to_datetime(df[tcol], utc=True).dt.tz_convert(TZ)
+    df[tcol] = pd.to_datetime(df[tcol], utc=True, format="ISO8601").dt.tz_convert(TZ)
     return df.set_index(tcol)
 
 
@@ -96,7 +96,7 @@ def load_anomalies(device_id: str, limit: int = 50) -> pd.DataFrame:
     )
     df = pd.DataFrame(rows)
     if not df.empty:
-        df["ts"] = pd.to_datetime(df["ts"], utc=True).dt.tz_convert(TZ)
+        df["ts"] = pd.to_datetime(df["ts"], utc=True, format="ISO8601").dt.tz_convert(TZ)
     return df
 
 
@@ -140,7 +140,7 @@ if st.button("\U0001f504 重新整理"):
 # --- 連線狀態 ---
 last_seen = dev.get("last_seen")
 if last_seen:
-    seen = pd.to_datetime(last_seen, utc=True)
+    seen = pd.to_datetime(last_seen, utc=True, format="ISO8601")
     age = (datetime.now(timezone.utc) - seen).total_seconds()
     badge = "\U0001f7e2 上線" if age < 300 else f"\U0001f534 離線({int(age // 60)} 分鐘)"
     st.caption(f"{badge}  ·  最後上線 {seen.tz_convert(TZ):%Y-%m-%d %H:%M:%S}")
