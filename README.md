@@ -15,7 +15,7 @@ Full pipeline deployed and running 24/7:
 
 `ESP32` → `HiveMQ Cloud` → `Render worker (aquaponics-ingest)` → `Supabase`
 
-- **Dashboard:** https://aquaponics-dashboard-bja1.onrender.com (Streamlit on Render, free tier — first load wakes it in ~30 s)
+- **Dashboard:** https://aquaponics-dashboard-bja1.onrender.com (NiceGUI on Render, free tier — first load wakes it in ~30 s)
 - Firmware publishes one telemetry packet per minute; NTP clock on the OLED.
 - Wi-Fi / MQTT credentials are provisioned at runtime via the WiFiManager
   captive portal (`AquaGuardian-Setup`), not baked into the firmware. An
@@ -94,7 +94,7 @@ run on their own `millis()` cadence.
 
 - [ ] Phase 2 sensors (water temp / pH / soil) — fill the reserved pins and
       the `null` metric slots; add columns to `FEATURE_COLS`
-- [ ] Streamlit dashboard on Render reading Supabase
+- [x] NiceGUI dashboard on Render reading Supabase
 - [ ] Remote threshold config via `aquaponics/<site>/<device>/cmd`
 - [ ] OTA firmware updates
 - [ ] Prophet / LightGBM model once multivariate history exists
