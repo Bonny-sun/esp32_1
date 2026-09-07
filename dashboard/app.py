@@ -267,12 +267,11 @@ def main_page() -> None:
             series = hist[col].dropna()
             unit = f"（{UNIT[m]}）" if UNIT[m] else ""
             ui.label(f"{LABEL[m]}{unit}").classes("text-sm text-gray-500 mt-2")
-            # ECharts "time" axis renders labels in UTC. Our index is
-            # Asia/Taipei — strip the tz and feed the wall-clock as epoch ms
-            # so the axis shows local time on a real (gap-aware) timeline.
-            # Cast via numpy datetime64[ms] so the unit is milliseconds no
-            # matter what resolution pandas gave the index (ns vs us).
-            ms = series.index.tz_localize(None).to_numpy().astype("datetime64[ms]").astype("int64")
+            # Feed real UTC epoch-ms; ECharts "time" axis renders it in the
+            # viewer's browser timezone (Taipei here), which is what we want.
+            # .to_numpy() on the tz-aware index already yields UTC; cast via
+            # datetime64[ms] so the unit is ms regardless of pandas resolution.
+            ms = series.index.to_numpy().astype("datetime64[ms]").astype("int64")
             pts = [[int(t), round(float(v), 2)] for t, v in zip(ms, series.values)]
             ui.echart(
                 {
