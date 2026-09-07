@@ -1,0 +1,38 @@
+name: forecast
+
+# Runs analysis/baseline.py on a schedule so aqua_forecasts / aqua_anomalies
+# stay fresh and the dashboard "AI 預測" section keeps updating.
+#
+# Setup once: repo → Settings → Secrets and variables → Actions → New secret
+#   SUPABASE_URL          https://<ref>.supabase.co
+#   SUPABASE_SERVICE_KEY  the sb_secret_... key
+#
+# Private repos: Actions minutes are limited (2000/mo free). ~48 runs/day at
+# ~1 min each ≈ 1440/mo — fine. Make the repo public for unlimited minutes,
+# or widen the cron if you add heavier models later.
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"      # every 30 min (UTC); matches the 30-min forecast horizon
+  workflow_dispatch: {}          # manual "Run workflow" button
+
+concurrency:
+  group: forecast
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: analysis/requirements.txt
+      - run: pip install -r analysis/requirements.txt
+      - run: python analysis/baseline.py
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          DEVICE_ID: esp32-aqua-01

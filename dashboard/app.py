@@ -156,6 +156,74 @@ def load_anomalies(device_id: str, limit: int = 50) -> pd.DataFrame:
 
 
 @cached(30)
+def load_forecasts(device_id: str) -> pd.DataFrame:
+    rows = (
+        sb().table("aqua_forecasts").select("*").eq("device_id", device_id)
+        .order("created_at", desc=True).limit(100).execute().data
+    )
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+    for c in ("ts_target", "created_at"):
+        df[c] = pd.to_datetime(df[c], utc=True, format="ISO8601").dt.tz_convert(TZ)
+    return df
+
+
+@cached(60)
+def load_forecast_eval(device_id: str, limit: int = 24) -> pd.DataFrame:
+    """Match each already-due forecast to the actual reading nearest its
+    target time (within 15 min). Returns a small table for the UI."""
+    now_iso = datetime.now(timezone.utc).isoformat()
+    fc = (
+        sb().table("aqua_forecasts").select("*").eq("device_id", device_id)
+        .lt("ts_target", now_iso).order("ts_target", desc=True).limit(limit).execute().data
+    )
+    if not fc:
+        return pd.DataFrame()
+    f = pd.DataFrame(fc)
+    f["ts_target"] = pd.to_datetime(f["ts_target"], utc=True, format="ISO8601")
+    lo = (f["ts_target"].min() - pd.Timedelta(minutes=15)).isoformat()
+    hi = (f["ts_target"].max() + pd.Timedelta(minutes=15)).isoformat()
+    tel = (
+        sb().table("aqua_telemetry")
+        .select("ts,temperature,humidity,water_temp,ph,soil_moisture")
+        .eq("device_id", device_id).gte("ts", lo).lte("ts", hi)
+        .order("ts", desc=True).limit(1000).execute().data
+    )
+    t = pd.DataFrame(tel)
+    if t.empty:
+        return pd.DataFrame()
+    t["ts"] = pd.to_datetime(t["ts"], utc=True, format="ISO8601")
+    t = t.set_index("ts").sort_index()
+    out = []
+    for _, r in f.iterrows():
+        metric = r["metric"]
+        if metric not in t.columns:
+            continue
+        s = t[metric].dropna()
+        if s.empty:
+            continue
+        pos = s.index.get_indexer([r["ts_target"]], method="nearest")[0]
+        if abs((s.index[pos] - r["ts_target"]).total_seconds()) > 900:
+            continue
+        actual = float(s.iloc[pos])
+        yhat = float(r["yhat"])
+        lo_v, hi_v = r.get("yhat_lower"), r.get("yhat_upper")
+        hit = pd.notna(lo_v) and pd.notna(hi_v) and float(lo_v) <= actual <= float(hi_v)
+        out.append(
+            {
+                "ts_target": r["ts_target"].tz_convert(TZ).strftime("%m-%d %H:%M"),
+                "metric": LABEL.get(metric, metric),
+                "yhat": round(yhat, 1),
+                "actual": round(actual, 1),
+                "err": round(abs(yhat - actual), 2),
+                "hit": "✓" if hit else "✗",
+            }
+        )
+    return pd.DataFrame(out)
+
+
+@cached(30)
 def load_thresholds(device_id: str) -> dict:
     rows = sb().table("aqua_thresholds").select("*").eq("device_id", device_id).execute().data
     return {r["metric"]: r for r in rows}
@@ -276,6 +344,54 @@ def main_page() -> None:
                     ui.label(f"{v}{suffix}").classes("text-2xl font-bold text-sky-700")
 
     @ui.refreshable
+    def forecast_section():
+        fc = load_forecasts(state["device_id"])
+        if fc.empty:
+            ui.label(
+                "尚無預測。執行 analysis/baseline.py（或等排程）後會出現。"
+            ).classes("text-gray-500")
+            return
+        latest = fc.sort_values("created_at").groupby("metric").tail(1)
+        with ui.row().classes("w-full gap-4 flex-wrap"):
+            for _, r in latest.iterrows():
+                m = r["metric"]
+                u = UNIT.get(m, "")
+                with ui.card().classes("min-w-[180px] flex-1 items-start"):
+                    ui.label(
+                        f"{LABEL.get(m, m)} · {int(r['horizon_min'])} 分鐘後"
+                    ).classes("text-sm text-gray-500")
+                    ui.label(f"{round(float(r['yhat']), 1)} {u}".strip()).classes(
+                        "text-2xl font-bold text-indigo-700"
+                    )
+                    lo_v, hi_v = r.get("yhat_lower"), r.get("yhat_upper")
+                    if pd.notna(lo_v) and pd.notna(hi_v):
+                        ui.label(
+                            f"可能範圍 {round(float(lo_v), 1)} – {round(float(hi_v), 1)}"
+                        ).classes("text-xs text-gray-400")
+        newest = fc["created_at"].max()
+        ui.label(
+            f"模型 {fc.iloc[0]['model']} · 產生於 {newest:%m-%d %H:%M}"
+        ).classes("text-xs text-gray-400")
+
+        ev = load_forecast_eval(state["device_id"])
+        if ev.empty:
+            return
+        ui.label("上次預測 vs 實際").classes("text-sm text-gray-500 mt-3")
+        cols = [
+            {"name": "ts_target", "label": "目標時間", "field": "ts_target", "align": "left"},
+            {"name": "metric", "label": "項目", "field": "metric", "align": "left"},
+            {"name": "yhat", "label": "預測", "field": "yhat", "align": "left"},
+            {"name": "actual", "label": "實際", "field": "actual", "align": "left"},
+            {"name": "err", "label": "誤差", "field": "err", "align": "left"},
+            {"name": "hit", "label": "命中", "field": "hit", "align": "left"},
+        ]
+        ui.table(columns=cols, rows=ev.to_dict("records"), row_key="ts_target").classes("w-full")
+        ui.label(
+            f"近 {len(ev)} 筆 · 命中率 {(ev['hit'] == '✓').mean() * 100:.0f}% · "
+            f"平均誤差 {ev['err'].mean():.2f}"
+        ).classes("text-xs text-gray-400")
+
+    @ui.refreshable
     def history_section():
         hours = RANGE_HOURS[state["range_label"]]
         hist = load_history(state["device_id"], hours)
@@ -394,6 +510,7 @@ def main_page() -> None:
         status_section.refresh()
         pet_section.refresh()
         metrics_section.refresh()
+        forecast_section.refresh()
         history_section.refresh()
         anomalies_section.refresh()
         thresholds_section.refresh()
@@ -421,6 +538,9 @@ def main_page() -> None:
         status_section()
         pet_section()
         metrics_section()
+
+        ui.label("AI 預測").classes("text-lg font-semibold mt-2")
+        forecast_section()
 
         ui.label("歷史趨勢").classes("text-lg font-semibold mt-2")
         ui.toggle(list(RANGE_HOURS.keys()), value=state["range_label"], on_change=on_range_change)
