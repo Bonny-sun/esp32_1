@@ -47,6 +47,13 @@ UNIT = {
     "ph": "",
     "soil_moisture": "%",
 }
+COLOR = {
+    "temperature": "#ea580c",   # orange
+    "humidity": "#0284c7",      # blue
+    "water_temp": "#0d9488",    # teal
+    "ph": "#7c3aed",            # violet
+    "soil_moisture": "#a16207", # amber-brown
+}
 PET_LABEL = {"drop": "水滴", "fish": "魚", "cat": "貓", "panda": "熊貓"}   # value must match firmware's petSkinFromString()
 RANGE_HOURS = {"24 小時": 24, "7 天": 168, "30 天": 720}
 
@@ -434,7 +441,7 @@ def main_page() -> None:
                             "smooth": True,
                             "showSymbol": False,
                             "areaStyle": {"opacity": 0.15},
-                            "color": "#0284c7",
+                            "color": COLOR.get(m, "#0284c7"),
                         }
                     ],
                 }
