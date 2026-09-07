@@ -117,12 +117,17 @@ def load_history(device_id: str, hours: int) -> pd.DataFrame:
     df = pd.DataFrame(rows)
     if df.empty:
         return df
-    df[tcol] = pd.to_datetime(df[tcol], utc=True, format="ISO8601").dt.tz_convert(TZ)
+    # Keep the index UTC-aware through resample (some pandas 2.x versions drop
+    # the tz on a tz-aware resample), then convert to Asia/Taipei ONCE at the
+    # end — guarding for a resample that came back tz-naive (still UTC values).
+    df[tcol] = pd.to_datetime(df[tcol], utc=True, format="ISO8601")
     df = df.set_index(tcol).sort_index()
     if raw:
         # 1 row/min is too dense to plot; bin to 10-min means. Empty bins stay
         # NaN so real gaps (device offline) show as breaks in the line.
         df = df.select_dtypes("number").resample("10min").mean()
+    idx = df.index
+    df.index = (idx.tz_localize("UTC") if idx.tz is None else idx).tz_convert(TZ)
     return df
 
 
