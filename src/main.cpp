@@ -152,6 +152,14 @@ bool  g_timeSynced = false;
 uint32_t g_lastPublishFlash = 0;   // millis() of last MQTT publish (for LED blip)
 uint32_t g_bootMs = 0;
 
+// Portal save -> deferred restart. We must NOT restart inside
+// saveParamsCallback(): WiFiManager only runs WiFi.begin(newSsid,newPass)
+// (which persists the creds to NVS) later, from wm.process(). Restarting in
+// the callback reboots onto the OLD creds. Instead we flag it and let loop()
+// restart once the new Wi-Fi has connected (or a grace timeout elapses).
+bool     g_cfgSaved   = false;
+uint32_t g_cfgSavedAt = 0;
+
 // ============================ Helpers ====================================
 
 static inline float round1(float v) { return roundf(v * 10.0f) / 10.0f; }
@@ -228,9 +236,11 @@ void saveParamsCallback() {
   String pet = wm.server->arg("pet");
   if (pet.length()) prefs.putString("pet", pet);
   prefs.end();
-  Serial.println("[CFG] saved — restarting");
-  delay(300);
-  ESP.restart();                                   // clean restart with the new config
+  // Deferred restart — see g_cfgSaved. Restarting here would beat WiFiManager
+  // to applying the new SSID/pass, so the board would reboot onto the old ones.
+  Serial.println("[CFG] saved — restarting once Wi-Fi (re)connects");
+  g_cfgSaved   = true;
+  g_cfgSavedAt = millis();
 }
 
 void updateMood(float t) {
@@ -835,6 +845,17 @@ void setup() {
 
 void loop() {
   tickWiFi();
+
+  // Deferred post-portal restart: reboot once the newly-entered Wi-Fi has
+  // actually connected (creds are now in NVS), or after a 15 s grace period
+  // if it can't (e.g. wrong password) — either way the creds are persisted
+  // and a fresh boot gives the cleanest re-init.
+  if (g_cfgSaved && (WiFi.status() == WL_CONNECTED || millis() - g_cfgSavedAt > 15000UL)) {
+    Serial.println("[CFG] applying new config — restarting now");
+    delay(200);
+    ESP.restart();
+  }
+
   tickMqtt();
   tickSensor();
   tickPublish();
