@@ -118,7 +118,12 @@ def load_history(device_id: str, hours: int) -> pd.DataFrame:
     if df.empty:
         return df
     df[tcol] = pd.to_datetime(df[tcol], utc=True, format="ISO8601").dt.tz_convert(TZ)
-    return df.set_index(tcol)
+    df = df.set_index(tcol).sort_index()
+    if raw:
+        # 1 row/min is too dense to plot; bin to 10-min means. Empty bins stay
+        # NaN so real gaps (device offline) show as breaks in the line.
+        df = df.select_dtypes("number").resample("10min").mean()
+    return df
 
 
 @cached(30)
@@ -264,28 +269,31 @@ def main_page() -> None:
             col = m if m in hist.columns else (f"{m}_avg" if f"{m}_avg" in hist.columns else None)
             if not col:
                 continue
-            series = hist[col].dropna()
+            series = hist[col]                       # keep NaN rows so gaps show
             unit = f"（{UNIT[m]}）" if UNIT[m] else ""
             ui.label(f"{LABEL[m]}{unit}").classes("text-sm text-gray-500 mt-2")
-            # Feed real UTC epoch-ms; ECharts "time" axis renders it in the
-            # viewer's browser timezone (Taipei here), which is what we want.
-            # .to_numpy() on the tz-aware index already yields UTC; cast via
-            # datetime64[ms] so the unit is ms regardless of pandas resolution.
-            ms = series.index.to_numpy().astype("datetime64[ms]").astype("int64")
-            pts = [[int(t), round(float(v), 2)] for t, v in zip(ms, series.values)]
+            # Category axis with labels formatted straight from the Asia/Taipei
+            # index — no ECharts timezone interpretation to get wrong. Bins are
+            # evenly spaced (10 min raw / 1 h rollup) so it still reads as a
+            # timeline; thin the labels to ~8.
+            labels = [t.strftime("%m-%d %H:%M") for t in series.index]
+            step = max(1, len(labels) // 8)
+            vals = [None if pd.isna(v) else round(float(v), 2) for v in series.values]
             ui.echart(
                 {
-                    "grid": {"left": 45, "right": 15, "top": 10, "bottom": 30},
+                    "grid": {"left": 45, "right": 15, "top": 10, "bottom": 40},
                     "xAxis": {
-                        "type": "time",
-                        "axisLabel": {"formatter": "{MM}-{dd}\n{HH}:{mm}", "hideOverlap": True},
+                        "type": "category",
+                        "data": labels,
+                        "axisLabel": {"interval": step - 1, "fontSize": 10},
                     },
                     "yAxis": {"type": "value", "scale": True},
                     "tooltip": {"trigger": "axis"},
                     "series": [
                         {
                             "type": "line",
-                            "data": pts,
+                            "data": vals,
+                            "connectNulls": False,
                             "smooth": True,
                             "showSymbol": False,
                             "areaStyle": {"opacity": 0.15},
