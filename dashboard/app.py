@@ -110,10 +110,19 @@ def load_history(device_id: str, hours: int) -> pd.DataFrame:
     table = "aqua_telemetry" if raw else "aqua_telemetry_hourly"
     tcol = "ts" if raw else "bucket"
     since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
-    rows = (
-        sb().table(table).select("*").eq("device_id", device_id)
-        .gte(tcol, since).order(tcol).limit(20000).execute().data
-    )
+    # PostgREST caps a response at ~1000 rows. Ascending + limit therefore
+    # returned the OLDEST 1000 rows of the window (missing the last ~7 h of a
+    # busy day). Page through NEWEST-first instead until the window is covered.
+    rows: list = []
+    for page in range(30):                       # 30 * 1000 = 30k row ceiling
+        chunk = (
+            sb().table(table).select("*").eq("device_id", device_id)
+            .gte(tcol, since).order(tcol, desc=True)
+            .range(page * 1000, page * 1000 + 999).execute().data
+        )
+        rows.extend(chunk)
+        if len(chunk) < 1000:
+            break
     df = pd.DataFrame(rows)
     if df.empty:
         return df
