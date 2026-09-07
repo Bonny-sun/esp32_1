@@ -267,16 +267,24 @@ def main_page() -> None:
             series = hist[col].dropna()
             unit = f"（{UNIT[m]}）" if UNIT[m] else ""
             ui.label(f"{LABEL[m]}{unit}").classes("text-sm text-gray-500 mt-2")
+            # ECharts "time" axis renders labels in UTC. Our index is
+            # Asia/Taipei — strip the tz and feed the wall-clock as epoch ms
+            # so the axis shows local time on a real (gap-aware) timeline.
+            ms = (series.index.tz_localize(None).astype("int64") // 1_000_000).tolist()
+            pts = [[int(t), round(float(v), 2)] for t, v in zip(ms, series.values)]
             ui.echart(
                 {
-                    "grid": {"left": 40, "right": 20, "top": 10, "bottom": 30},
-                    "xAxis": {"type": "category", "data": [t.strftime("%m-%d %H:%M") for t in series.index]},
-                    "yAxis": {"type": "value"},
+                    "grid": {"left": 45, "right": 15, "top": 10, "bottom": 30},
+                    "xAxis": {
+                        "type": "time",
+                        "axisLabel": {"formatter": "{MM}-{dd}\n{HH}:{mm}", "hideOverlap": True},
+                    },
+                    "yAxis": {"type": "value", "scale": True},
                     "tooltip": {"trigger": "axis"},
                     "series": [
                         {
                             "type": "line",
-                            "data": [round(float(v), 2) for v in series.values],
+                            "data": pts,
                             "smooth": True,
                             "showSymbol": False,
                             "areaStyle": {"opacity": 0.15},
