@@ -59,18 +59,27 @@ sb = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # ---- 1. ingest ---------------------------------------------------------
 def load_history(device_id: str, hours: int) -> pd.DataFrame:
+    """Page through the window NEWEST-first. PostgREST caps a response near
+    1000 rows, so a plain ascending .limit() would only return the oldest
+    ~1000 rows (~16 h) of a multi-day lookback."""
     since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
-    cols = ["ts", *FEATURE_COLS]
-    res = (
-        sb.table("aqua_telemetry")
-        .select(",".join(cols))
-        .eq("device_id", device_id)
-        .gte("ts", since)
-        .order("ts", desc=False)
-        .limit(50000)
-        .execute()
-    )
-    df = pd.DataFrame(res.data)
+    cols = ",".join(["ts", *FEATURE_COLS])
+    rows: list = []
+    for page in range(60):  # 60 * 1000 = 60k row ceiling
+        chunk = (
+            sb.table("aqua_telemetry")
+            .select(cols)
+            .eq("device_id", device_id)
+            .gte("ts", since)
+            .order("ts", desc=True)
+            .range(page * 1000, page * 1000 + 999)
+            .execute()
+            .data
+        )
+        rows.extend(chunk)
+        if len(chunk) < 1000:
+            break
+    df = pd.DataFrame(rows)
     if df.empty:
         return df
     df["ts"] = pd.to_datetime(df["ts"], utc=True, format="ISO8601")
