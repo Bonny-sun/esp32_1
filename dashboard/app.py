@@ -273,6 +273,10 @@ def main_page() -> None:
         if hist.empty:
             ui.label("資料量還不足。").classes("text-gray-500")
             return
+        ui.label(
+            f"資料範圍 {hist.index[0]:%m-%d %H:%M} ～ {hist.index[-1]:%m-%d %H:%M}"
+            f"（{len(hist)} 點）"
+        ).classes("text-xs text-gray-400")
         for m in ("temperature", "humidity"):
             col = m if m in hist.columns else (f"{m}_avg" if f"{m}_avg" in hist.columns else None)
             if not col:
