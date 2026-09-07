@@ -9,20 +9,27 @@ light, MQTT → Supabase, baseline ML.
 **Phase 2 (planned):** water temperature (DS18B20), pH (DFRobot SEN0161-V2),
 soil moisture — the data model and feature pipeline already have slots for them.
 
-## Status — live (2026-09-04)
+## Status — live (updated 2026-09-07)
 
 Full pipeline deployed and running 24/7:
 
 `ESP32` → `HiveMQ Cloud` → `Render worker (aquaponics-ingest)` → `Supabase`
+→ `NiceGUI dashboard` + `GitHub Actions forecast job`
 
-- **Dashboard:** https://aquaponics-dashboard-bja1.onrender.com (NiceGUI on Render, free tier — first load wakes it in ~30 s)
+- **Dashboard:** https://aquaponics-dashboard-bja1.onrender.com (NiceGUI on Render, free tier — first load wakes it in ~30 s). Sections: live values, **AI 預測** (latest forecast per metric + a "predicted vs actual" table with rolling hit-rate / MAE), history charts (10-min bins, per-metric colours), anomalies, editable alert thresholds.
 - Firmware publishes one telemetry packet per minute; NTP clock on the OLED.
+  OLED pet skin (water-drop / fish / cat / panda) is picked in the portal or
+  changed remotely from the dashboard via a retained MQTT `.../cmd`.
 - Wi-Fi / MQTT credentials are provisioned at runtime via the WiFiManager
   captive portal (`AquaGuardian-Setup`), not baked into the firmware. An
   optional 2nd (backup) Wi-Fi SSID/password can also be set in the same
   portal; the firmware fails over to it via WiFiMulti if the primary AP drops.
 - Supabase `pg_cron`: hourly rollup, 30-day raw retention, per-minute
   threshold alerting.
+- **AI:** `.github/workflows/forecast.yml` runs `analysis/baseline.py` every
+  30 min (repo secrets `SUPABASE_URL` / `SUPABASE_SERVICE_KEY`) → EWMA+drift
+  30-min forecast + gated rolling-z anomaly, written to
+  `aqua_forecasts` / `aqua_anomalies`.
 
 ## Stack
 

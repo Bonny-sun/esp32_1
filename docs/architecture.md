@@ -176,3 +176,29 @@ every 15 min once there is a day or two of data.
 * **2026-09-04** — Timestamp parsing: `aqua_telemetry.ts` mixes microsecond
   (DB default `now()`) and second (device NTP) precision; dashboard + analysis
   parse with `pd.to_datetime(..., format="ISO8601")`.
+* **2026-09-07** — Dashboard rewritten on **NiceGUI** (from Streamlit) for a
+  more polished UI; merged via PR #1. Firmware gained backup Wi-Fi (2nd SSID +
+  WiFiMulti), zh-TW captive-portal strings, and selectable OLED pet skins
+  (drop/fish/cat/panda) settable in the portal or remotely via retained MQTT
+  `.../cmd`. `aqua_devices.pet_skin` column (`sql/03_pet_skin.sql`).
+* **2026-09-07** — Fixed `saveParamsCallback()` restarting before WiFiManager
+  applied the new SSID/pass (rebooted onto old creds); now a deferred restart
+  from `loop()` once connected or after a 15 s grace.
+* **2026-09-07** — **PostgREST 1000-row cap**: `load_history` (dashboard *and*
+  `baseline.py`) ordered ascending + `.limit()`, so it only ever got the
+  OLDEST ~1000 rows of the window — chart ended ~7 h early and the first AI
+  run scored on 3-day-old data. Fix: page NEWEST-first
+  (`.order(col, desc=True).range(p*1000, p*1000+999)`) until a short page.
+* **2026-09-07** — Chart timezone: ECharts axis TZ handling is unreliable, and
+  **pandas 2.x drops the tz on a tz-aware `.resample()`** (Render runs 2.2.x;
+  local dev 3.0.5 does not — bug only showed in prod). `load_history` now
+  returns a tz-naive index already holding Asia/Taipei wall-clock
+  (`… .tz_localize(None) + Timedelta(hours=8)`); category axis, `strftime`
+  labels; raw data binned to 10-min means; per-metric line colours.
+* **2026-09-07** — Dashboard **AI 預測** section (latest forecast + predicted-
+  vs-actual table + hit-rate/MAE). `.github/workflows/forecast.yml` runs
+  `baseline.py` every 30 min (`workflow_dispatch` also); needs repo secrets
+  `SUPABASE_URL` / `SUPABASE_SERVICE_KEY`.
+* **2026-09-07** — z-score anomaly detector was crying wolf on near-flat
+  signals (tiny rolling std → huge z from a trivial wiggle). Now needs z>3.5
+  **and** a per-metric minimum absolute deviation, with a std floor.
