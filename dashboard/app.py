@@ -270,7 +270,9 @@ def main_page() -> None:
             # ECharts "time" axis renders labels in UTC. Our index is
             # Asia/Taipei — strip the tz and feed the wall-clock as epoch ms
             # so the axis shows local time on a real (gap-aware) timeline.
-            ms = (series.index.tz_localize(None).astype("int64") // 1_000_000).tolist()
+            # Cast via numpy datetime64[ms] so the unit is milliseconds no
+            # matter what resolution pandas gave the index (ns vs us).
+            ms = series.index.tz_localize(None).to_numpy().astype("datetime64[ms]").astype("int64")
             pts = [[int(t), round(float(v), 2)] for t, v in zip(ms, series.values)]
             ui.echart(
                 {
