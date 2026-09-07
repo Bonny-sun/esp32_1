@@ -33,14 +33,14 @@ services:
       - key: SUPABASE_SERVICE_KEY
         sync: false
 
-  # ---- Streamlit dashboard (free web service; sleeps when idle) ----
+  # ---- NiceGUI dashboard (free web service; sleeps when idle) ----
   - type: web
     name: aquaponics-dashboard
     runtime: python
     plan: free
     rootDir: dashboard
     buildCommand: pip install -r requirements.txt
-    startCommand: streamlit run app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true --browser.gatherUsageStats false
+    startCommand: python app.py
     autoDeploy: true
     envVars:
       - key: PYTHON_VERSION
