@@ -51,8 +51,16 @@ FEATURE_COLS = ["temperature", "humidity"]
 RESAMPLE = "5min"
 LOOKBACK_H = 72
 ROLL_WIN = 12          # 12 * 5 min = 1 h rolling window
-Z_THRESH = 3.0
+Z_THRESH = 3.5
 HORIZON_STEPS = 6      # 6 * 5 min = 30 min ahead
+
+# Anti-false-positive gates for the z-score detector. On a near-flat signal
+# the rolling std collapses, so a trivial wiggle scores many sigma. Require
+# BOTH a high z AND a meaningful absolute move; also floor the std.
+Z_MIN_ABS_DEV = {"temperature": 0.8, "humidity": 3.0,
+                 "water_temp": 0.5, "ph": 0.15, "soil_moisture": 5.0}
+Z_STD_FLOOR = {"temperature": 0.15, "humidity": 0.5,
+               "water_temp": 0.1, "ph": 0.02, "soil_moisture": 1.0}
 
 sb = create_client(SUPABASE_URL, SUPABASE_KEY)
 
@@ -121,8 +129,11 @@ def forecast(out: pd.DataFrame, col: str, steps: int) -> dict:
 def detect_univariate(out: pd.DataFrame, cols: list[str]) -> list[dict]:
     hits: list[dict] = []
     for c in cols:
-        z = (out[c] - out[f"{c}_roll_mean"]) / out[f"{c}_roll_std"]
-        for t in out.index[z.abs() > Z_THRESH]:
+        dev = out[c] - out[f"{c}_roll_mean"]
+        std = out[f"{c}_roll_std"].clip(lower=Z_STD_FLOOR.get(c, 1e-9))
+        z = dev / std
+        mask = (z.abs() > Z_THRESH) & (dev.abs() > Z_MIN_ABS_DEV.get(c, 0.0))
+        for t in out.index[mask]:
             hits.append(
                 {
                     "device_id": DEVICE_ID,

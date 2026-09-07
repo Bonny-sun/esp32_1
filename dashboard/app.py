@@ -448,9 +448,15 @@ def main_page() -> None:
                 ui.icon("check_circle")
                 ui.label("目前沒有異常紀錄。")
             return
+        method_label = {
+            "threshold": "超出範圍",
+            "rolling_zscore": "統計偏離",
+            "isolation_forest": "多變量偵測",
+        }
         show = an[["ts", "metric", "value", "method", "note"]].copy()
         show["ts"] = show["ts"].dt.strftime("%m-%d %H:%M")
         show["metric"] = show["metric"].map(lambda x: LABEL.get(x, x))
+        show["method"] = show["method"].map(lambda x: method_label.get(x, x))
         columns = [
             {"name": "ts", "label": "時間", "field": "ts", "align": "left"},
             {"name": "metric", "label": "項目", "field": "metric", "align": "left"},
