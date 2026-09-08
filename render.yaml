@@ -33,11 +33,11 @@ services:
       - key: SUPABASE_SERVICE_KEY
         sync: false
 
-  # ---- NiceGUI dashboard (free web service; sleeps when idle) ----
+  # ---- NiceGUI dashboard (paid instance; always-on, no cold start) ----
   - type: web
     name: aquaponics-dashboard
     runtime: python
-    plan: free
+    plan: starter
     rootDir: dashboard
     buildCommand: pip install -r requirements.txt
     startCommand: python app.py

@@ -16,7 +16,7 @@ Full pipeline deployed and running 24/7:
 `ESP32` → `HiveMQ Cloud` → `Render worker (aquaponics-ingest)` → `Supabase`
 → `NiceGUI dashboard` + `GitHub Actions forecast job`
 
-- **Dashboard:** https://aquaponics-dashboard-bja1.onrender.com (NiceGUI on Render, free tier — first load wakes it in ~30 s). Sections: live values, **AI 預測** (latest forecast per metric + a "predicted vs actual" table with rolling hit-rate / MAE), history charts (10-min bins, per-metric colours), anomalies, editable alert thresholds.
+- **Dashboard:** https://aquaponics-dashboard-bja1.onrender.com (NiceGUI on Render, Starter plan — always-on, no cold start). Sections: live values, **AI 預測** (latest forecast per metric + a "predicted vs actual" table with rolling hit-rate / MAE), history charts (10-min bins, per-metric colours), anomalies, editable alert thresholds.
 - Firmware publishes one telemetry packet per minute; NTP clock on the OLED.
   OLED pet skin (water-drop / fish / cat / panda) is picked in the portal or
   changed remotely from the dashboard via a retained MQTT `.../cmd`.
