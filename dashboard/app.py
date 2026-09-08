@@ -419,17 +419,19 @@ def main_page() -> None:
             # Category axis with labels formatted straight from the Asia/Taipei
             # index — no ECharts timezone interpretation to get wrong. Bins are
             # evenly spaced (10 min raw / 1 h rollup) so it still reads as a
-            # timeline; thin the labels to ~8.
+            # timeline. A fixed "show every Nth label" step was tuned for a
+            # desktop-width chart and overlapped into unreadable mush on a
+            # phone-width one — let ECharts measure the actual rendered width
+            # and thin + rotate labels itself instead.
             labels = [t.strftime("%m-%d %H:%M") for t in series.index]
-            step = max(1, len(labels) // 8)
             vals = [None if pd.isna(v) else round(float(v), 2) for v in series.values]
             ui.echart(
                 {
-                    "grid": {"left": 45, "right": 15, "top": 10, "bottom": 40},
+                    "grid": {"left": 45, "right": 15, "top": 10, "bottom": 50},
                     "xAxis": {
                         "type": "category",
                         "data": labels,
-                        "axisLabel": {"interval": step - 1, "fontSize": 10},
+                        "axisLabel": {"interval": "auto", "hideOverlap": True, "rotate": 30, "fontSize": 10},
                     },
                     "yAxis": {"type": "value", "scale": True},
                     "tooltip": {"trigger": "axis"},
