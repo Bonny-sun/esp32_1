@@ -393,10 +393,16 @@ def main_page() -> None:
             {"name": "hit", "label": "命中", "field": "hit", "align": "left"},
         ]
         ui.table(columns=cols, rows=ev.to_dict("records"), row_key="ts_target").classes("w-full")
-        ui.label(
-            f"近 {len(ev)} 筆 · 命中率 {(ev['hit'] == '✓').mean() * 100:.0f}% · "
-            f"平均誤差 {ev['err'].mean():.2f}"
-        ).classes("text-xs text-gray-400")
+        with ui.column().classes("gap-0.5 mt-1"):
+            for m in METRICS:
+                label = LABEL.get(m, m)
+                g = ev[ev["metric"] == label]
+                if g.empty:
+                    continue
+                ui.label(
+                    f"{label} · 近 {len(g)} 筆 · 命中率 {(g['hit'] == '✓').mean() * 100:.0f}% · "
+                    f"平均誤差 {g['err'].mean():.2f}"
+                ).classes("text-xs text-gray-400")
 
     @ui.refreshable
     def history_section():
