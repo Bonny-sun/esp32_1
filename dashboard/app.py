@@ -492,19 +492,21 @@ def main_page() -> None:
 
         th = load_thresholds(state["device_id"])
         edits: dict = {}
+        # ui.grid (CSS grid, minmax(0,1fr) columns) shrinks correctly on narrow
+        # screens; a ui.row (flexbox) does not — its items refuse to shrink
+        # below their natural content width and wrap into a ragged 2-line mess.
         with ui.card().classes("w-full"):
-            with ui.row().classes("w-full font-semibold text-sm"):
-                ui.label("項目").classes("w-24")
-                ui.label("下限").classes("w-24")
-                ui.label("上限").classes("w-24")
-                ui.label("啟用").classes("w-16")
-            for m in METRICS:
-                cur = th.get(m, {})
-                with ui.row().classes("w-full items-center"):
-                    ui.label(LABEL.get(m, m)).classes("w-24")
-                    mn = ui.number(value=float(cur.get("min_val") or 0.0), step=0.5).classes("w-24")
-                    mx = ui.number(value=float(cur.get("max_val") or 0.0), step=0.5).classes("w-24")
-                    en = ui.checkbox(value=bool(cur.get("enabled", False))).classes("w-16")
+            with ui.grid(columns=4).classes("w-full gap-x-2 gap-y-2 items-center"):
+                ui.label("項目").classes("font-semibold text-sm")
+                ui.label("下限").classes("font-semibold text-sm")
+                ui.label("上限").classes("font-semibold text-sm")
+                ui.label("啟用").classes("font-semibold text-sm")
+                for m in METRICS:
+                    cur = th.get(m, {})
+                    ui.label(LABEL.get(m, m)).classes("text-sm")
+                    mn = ui.number(value=float(cur.get("min_val") or 0.0), step=0.5).classes("w-full")
+                    mx = ui.number(value=float(cur.get("max_val") or 0.0), step=0.5).classes("w-full")
+                    en = ui.checkbox(value=bool(cur.get("enabled", False)))
                     edits[m] = (mn, mx, en)
 
             def do_save(edits=edits):
