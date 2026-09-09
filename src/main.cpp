@@ -17,6 +17,9 @@
 //     a captive portal for Wi-Fi + MQTT creds. To force it manually: reset the
 //     board, then hold BOOT (GPIO0) within the first 3 s. secrets.h values are
 //     only compile-time DEFAULTS; the portal overrides them into NVS.
+//   * Multi-board: the portal also has a "裝置 ID" field. Flash this one image
+//     to every board and give each a unique id (esp32-aqua-02, ...) in the
+//     portal — no per-board build. Defaults to secrets.h DEVICE_ID.
 //   * Backup Wi-Fi: the portal also takes an optional 2nd SSID/password
 //     (e.g. a phone hotspot). Both APs are handed to WiFiMulti; tickWiFi()
 //     retries whichever is in range if the primary drops.
@@ -108,7 +111,11 @@ WiFiManager      wm;
 WiFiMulti        wifiMulti;        // holds primary + backup AP so tickWiFi() can fall over
 Preferences      prefs;
 
-// Runtime MQTT config — loaded from NVS, falling back to secrets.h defaults.
+// Runtime config — loaded from NVS, falling back to secrets.h defaults.
+// g_deviceId lets one firmware image serve many boards: flash it, then set a
+// unique ID (e.g. esp32-aqua-02) in the captive portal. Defaults to the
+// secrets.h DEVICE_ID so an already-provisioned board is unaffected.
+String   g_deviceId = DEVICE_ID;
 String   g_mqttHost = MQTT_HOST;
 uint16_t g_mqttPort = MQTT_PORT;
 String   g_mqttUser = MQTT_USER;
@@ -120,6 +127,7 @@ String g_wifiSsid2 = "";
 String g_wifiPass2 = "";
 
 // Captive-portal custom fields
+WiFiManagerParameter p_devid("devid", "裝置 ID（每台唯一，如 esp32-aqua-02）", "", 40);
 WiFiManagerParameter p_host("host", "MQTT 主機位址", "", 64);
 WiFiManagerParameter p_port("port", "MQTT 連接埠", "", 6);
 WiFiManagerParameter p_user("user", "MQTT 帳號", "", 32);
@@ -211,6 +219,7 @@ const char* petSkinToString(PetSkin s) {
 // ---- Runtime MQTT config (NVS <- portal, defaults <- secrets.h) --------
 void loadMqttConfig() {
   prefs.begin("aqua", true);                       // read-only
+  g_deviceId = prefs.getString("devid", DEVICE_ID);
   g_mqttHost = prefs.getString("host", MQTT_HOST);
   g_mqttPort = prefs.getUShort("port", MQTT_PORT);
   g_mqttUser = prefs.getString("user", MQTT_USER);
@@ -224,6 +233,7 @@ void loadMqttConfig() {
 // WiFiManager calls this after the user saves the portal form.
 void saveParamsCallback() {
   prefs.begin("aqua", false);
+  if (strlen(p_devid.getValue())) prefs.putString("devid", p_devid.getValue());
   if (strlen(p_host.getValue())) prefs.putString("host", p_host.getValue());
   if (strlen(p_port.getValue())) prefs.putUShort("port", (uint16_t)atoi(p_port.getValue()));
   if (strlen(p_user.getValue())) prefs.putString("user", p_user.getValue());
@@ -618,7 +628,7 @@ void tickLed() {
 void publishTelemetry() {
   JsonDocument doc;
   doc["schema"]    = 1;
-  doc["device_id"] = DEVICE_ID;
+  doc["device_id"] = g_deviceId;
   doc["site_id"]   = SITE_ID;
   doc["fw"]        = FW_VERSION;
   doc["uptime_s"]  = (millis() - g_bootMs) / 1000;
@@ -713,7 +723,7 @@ void tickMqtt() {
 
   Serial.println("[MQTT] connecting...");
   // Last Will: retained "offline" on ungraceful disconnect
-  bool ok = mqtt.connect(DEVICE_ID, g_mqttUser.c_str(), g_mqttPass.c_str(),
+  bool ok = mqtt.connect(g_deviceId.c_str(), g_mqttUser.c_str(), g_mqttPass.c_str(),
                          TOPIC_STATUS, 1, true, "{\"online\":false}");
   if (ok) {
     mqtt.publish(TOPIC_STATUS, "{\"online\":true}", true);   // retained
@@ -733,9 +743,9 @@ void setup() {
 
   loadMqttConfig();                  // NVS -> g_mqtt* (falls back to secrets.h)
 
-  snprintf(TOPIC_TELEMETRY, sizeof(TOPIC_TELEMETRY), "aquaponics/%s/%s/telemetry", SITE_ID, DEVICE_ID);
-  snprintf(TOPIC_STATUS,    sizeof(TOPIC_STATUS),    "aquaponics/%s/%s/status",    SITE_ID, DEVICE_ID);
-  snprintf(TOPIC_CMD,       sizeof(TOPIC_CMD),       "aquaponics/%s/%s/cmd",       SITE_ID, DEVICE_ID);
+  snprintf(TOPIC_TELEMETRY, sizeof(TOPIC_TELEMETRY), "aquaponics/%s/%s/telemetry", SITE_ID, g_deviceId.c_str());
+  snprintf(TOPIC_STATUS,    sizeof(TOPIC_STATUS),    "aquaponics/%s/%s/status",    SITE_ID, g_deviceId.c_str());
+  snprintf(TOPIC_CMD,       sizeof(TOPIC_CMD),       "aquaponics/%s/%s/cmd",       SITE_ID, g_deviceId.c_str());
 
   // RGB PWM
   ledcSetup(CH_R, LED_FREQ, LED_RES); ledcAttachPin(PIN_LED_R, CH_R);
@@ -761,6 +771,7 @@ void setup() {
   {
     char portStr[6];
     snprintf(portStr, sizeof(portStr), "%u", g_mqttPort);
+    p_devid.setValue(g_deviceId.c_str(), 40);
     p_host.setValue(g_mqttHost.c_str(), 64);
     p_port.setValue(portStr, 6);
     p_user.setValue(g_mqttUser.c_str(), 32);
@@ -785,6 +796,7 @@ void setup() {
       g_petSkin == PET_PANDA ? "selected" : "");
     p_petSelect = new WiFiManagerParameter(petSelectHtml);
   }
+  wm.addParameter(&p_devid);
   wm.addParameter(&p_host);
   wm.addParameter(&p_port);
   wm.addParameter(&p_user);
@@ -839,8 +851,8 @@ void setup() {
   mqtt.setBufferSize(512);
   mqtt.setKeepAlive(30);
 
-  Serial.printf("[BOOT] setup done — MQTT %s:%u user=%s\n",
-                g_mqttHost.c_str(), g_mqttPort, g_mqttUser.c_str());
+  Serial.printf("[BOOT] setup done — device=%s · MQTT %s:%u user=%s\n",
+                g_deviceId.c_str(), g_mqttHost.c_str(), g_mqttPort, g_mqttUser.c_str());
 }
 
 void loop() {
