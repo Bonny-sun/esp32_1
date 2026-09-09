@@ -202,3 +202,22 @@ every 15 min once there is a day or two of data.
 * **2026-09-07** — z-score anomaly detector was crying wolf on near-flat
   signals (tiny rolling std → huge z from a trivial wiggle). Now needs z>3.5
   **and** a per-metric minimum absolute deviation, with a std floor.
+* **2026-09-09** — Anomalies: `aqua_check_thresholds()` dedupe window 10 min
+  → 1 h; dashboard 近期異常 gains a 溫度/濕度/溫溼度 filter + hourly thinning.
+  Same filter added to the AI 預測 section (`METRIC_FILTERS`).
+* **2026-09-09** — Live metric cards turn **red** when the value is outside
+  that device's enabled `aqua_thresholds` band (`_out_of_band()` helper).
+* **2026-09-09** — **Multi-board.** One firmware image → per-board `裝置 ID`
+  field in the captive portal (NVS key `devid`), used for the MQTT client id,
+  topic paths and payload. Dashboard: a **裝置總覽** row (shows when ≥2
+  devices) with each board's live temp/humidity + online dot; click a card to
+  switch the detail view.
+* **2026-09-09** — Redrew the cat (pointed ears + white whiskers) and panda
+  (white-rimmed black ears + tilted black eye patches) — the old versions
+  were near-identical blobs on the 48 px OLED.
+* **2026-09-09** — Pet-expression thresholds are runtime now: firmware
+  `g_tempHot`/`g_tempCold` (NVS `thi`/`tlo`, default 28/18), set from the
+  dashboard 虛擬寵物 card, delivered as one retained MQTT
+  `{"pet":…,"pet_hot":…,"pet_cold":…}` on `.../cmd`, echoed back in telemetry.
+  `sql/04_pet_temp.sql` adds `aqua_devices.pet_hot` / `pet_cold`. Hysteresis
+  stays fixed at 1 °C. Independent of the cloud `aqua_thresholds` alerting.
