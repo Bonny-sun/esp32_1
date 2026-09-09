@@ -97,6 +97,10 @@ def handle_payload(topic: str, raw: bytes) -> None:
     }
     if "pet" in p:                        # what the firmware actually has applied
         device_row["pet_skin"] = p["pet"]
+    if "pet_hot" in p:
+        device_row["pet_hot"] = p["pet_hot"]
+    if "pet_cold" in p:
+        device_row["pet_cold"] = p["pet_cold"]
 
     try:
         sb.table("aqua_devices").upsert(device_row, on_conflict="device_id").execute()

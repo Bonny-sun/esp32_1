@@ -264,21 +264,28 @@ def save_thresholds(device_id: str, edits: dict) -> None:
     clear_cache()
 
 
-def publish_pet_skin(site_id: str, device_id: str, skin: str) -> None:
+def publish_cmd(site_id: str, device_id: str, payload: dict) -> None:
     """Publish a retained MQTT command the ESP32 applies immediately (no
-    reboot) and also persists to its own NVS. Retained so a currently
-    offline device picks it up the moment it reconnects. Short-lived
-    connection — this only runs inside a button click, not continuously."""
+    reboot) and persists to its own NVS. Retained so a currently offline
+    device picks it up on reconnect. Short-lived connection — only runs
+    inside a button click, not continuously."""
     topic = f"aquaponics/{site_id}/{device_id}/cmd"
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"dash-{device_id}-{os.getpid()}")
     client.username_pw_set(MQTT_USER, MQTT_PASS)
     client.tls_set(tls_version=ssl.PROTOCOL_TLS_CLIENT)
     client.connect(MQTT_HOST, MQTT_PORT, keepalive=10)
     client.loop_start()
-    client.publish(topic, json.dumps({"pet": skin}), qos=1, retain=True)
-    time.sleep(0.3)   # give the publish time to flush before we tear the connection down
+    client.publish(topic, json.dumps(payload), qos=1, retain=True)
+    time.sleep(0.3)   # let the publish flush before tearing the connection down
     client.loop_stop()
     client.disconnect()
+
+
+def publish_pet_state(site_id: str, device_id: str, skin: str, hot: float, cold: float) -> None:
+    # One retained message carrying the full pet state, so an offline device
+    # catches up on everything at once (a partial retained payload would
+    # clobber the rest).
+    publish_cmd(site_id, device_id, {"pet": skin, "pet_hot": hot, "pet_cold": cold})
 
 
 # ---------------------------------------------------------------- 介面
@@ -381,26 +388,43 @@ def main_page() -> None:
     def pet_section():
         dev = device()
         current_pet = dev.get("pet_skin") or "drop"
+        hot0 = float(dev.get("pet_hot") if dev.get("pet_hot") is not None else 28)
+        cold0 = float(dev.get("pet_cold") if dev.get("pet_cold") is not None else 18)
         with ui.card().classes("w-full"):
-            ui.label("虛擬寵物外觀").classes("font-semibold")
-            with ui.row().classes("items-center gap-3"):
-                sel = ui.select(dict(PET_LABEL), value=current_pet).classes("w-40")
-                if not MQTT_HOST:
-                    ui.label("尚未設定 MQTT_HOST 等環境變數，無法從這裡送出變更。").classes(
-                        "text-xs text-gray-400"
-                    )
-                else:
-                    site_id = dev.get("site_id", "default")
-                    device_id = state["device_id"]
+            ui.label("虛擬寵物").classes("font-semibold")
+            with ui.row().classes("items-center gap-3 flex-wrap"):
+                sel = ui.select(dict(PET_LABEL), value=current_pet, label="外觀").classes("w-32")
+                n_hot = ui.number(label="流汗門檻 °C", value=hot0, step=0.5).classes("w-32")
+                n_cold = ui.number(label="發抖門檻 °C", value=cold0, step=0.5).classes("w-32")
+            if not MQTT_HOST:
+                ui.label("尚未設定 MQTT_HOST 等環境變數，無法從這裡送出變更。").classes(
+                    "text-xs text-gray-400"
+                )
+            else:
+                site_id = dev.get("site_id", "default")
+                device_id = state["device_id"]
 
-                    async def apply(sel=sel, site_id=site_id, device_id=device_id):
-                        try:
-                            await run.io_bound(publish_pet_skin, site_id, device_id, sel.value)
-                            ui.notify(f"已送出「{PET_LABEL[sel.value]}」，裝置上線後會立刻套用。", type="positive")
-                        except Exception as exc:
-                            ui.notify(f"送出失敗：{exc}", type="negative")
+                async def apply(sel=sel, n_hot=n_hot, n_cold=n_cold, site_id=site_id, device_id=device_id):
+                    hot, cold = float(n_hot.value), float(n_cold.value)
+                    if cold >= hot:
+                        ui.notify("發抖門檻要小於流汗門檻。", type="negative")
+                        return
+                    try:
+                        await run.io_bound(
+                            publish_pet_state, site_id, device_id, sel.value, hot, cold
+                        )
+                        ui.notify(
+                            f"已送出：{PET_LABEL[sel.value]}、>{hot}°C 流汗、<{cold}°C 發抖。"
+                            "裝置上線後立即套用。",
+                            type="positive",
+                        )
+                    except Exception as exc:
+                        ui.notify(f"送出失敗：{exc}", type="negative")
 
-                    ui.button("套用", on_click=apply)
+                ui.button("套用", on_click=apply).classes("mt-1")
+                ui.label("OLED 寵物表情的門檻(與雲端「警戒範圍」告警無關)。").classes(
+                    "text-xs text-gray-400"
+                )
 
     @ui.refreshable
     def metrics_section():

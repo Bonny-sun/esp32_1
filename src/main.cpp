@@ -77,10 +77,12 @@ static const int PIN_LED_B = 18;   // RGB LED - blue  (220 ohm)
 #define DHT_TYPE DHT11             // DHT11  (blue module you have now)
 // #define DHT_TYPE DHT22          // DHT22 / AM2302 (white module, better data)
 
-// --- Thresholds with hysteresis (degrees C) ---------------------------
-static const float TEMP_HOT  = 28.0f;   // -> HOT mood above this
-static const float TEMP_COLD = 18.0f;   // -> COLD mood below this
-static const float TEMP_HYST = 1.0f;    // must recover by this much to return COMFY
+// --- Pet-expression thresholds (degrees C) ---------------------------
+// Runtime-configurable from the dashboard: it publishes retained
+// {"pet_hot":X,"pet_cold":Y} to .../cmd; the values live in NVS.
+static const float PET_HOT_DEFAULT  = 28.0f;
+static const float PET_COLD_DEFAULT = 18.0f;
+static const float TEMP_HYST        = 1.0f;   // must recover by this much to return COMFY
 
 // --- Timing (ms) -------------------------------------------------------
 static const uint32_t SENSOR_MS   = 2000;    // DHT11 max sample rate ~1 Hz
@@ -120,6 +122,8 @@ String   g_mqttHost = MQTT_HOST;
 uint16_t g_mqttPort = MQTT_PORT;
 String   g_mqttUser = MQTT_USER;
 String   g_mqttPass = MQTT_PASS;
+float    g_tempHot  = PET_HOT_DEFAULT;   // pet HOT/COLD thresholds, from NVS / dashboard
+float    g_tempCold = PET_COLD_DEFAULT;
 
 // Backup Wi-Fi (2nd AP) — set via the captive portal, stored in NVS. The
 // primary AP is still whatever WiFiManager's own SSID picker saved.
@@ -227,6 +231,8 @@ void loadMqttConfig() {
   g_wifiSsid2 = prefs.getString("ssid2", "");
   g_wifiPass2 = prefs.getString("pass2", "");
   g_petSkin = petSkinFromString(prefs.getString("pet", "drop"));
+  g_tempHot  = prefs.getFloat("thi", PET_HOT_DEFAULT);
+  g_tempCold = prefs.getFloat("tlo", PET_COLD_DEFAULT);
   prefs.end();
 }
 
@@ -257,14 +263,14 @@ void updateMood(float t) {
   if (isnan(t)) return;
   switch (g_mood) {
     case COMFY:
-      if      (t > TEMP_HOT)  g_mood = HOT;
-      else if (t < TEMP_COLD) g_mood = COLD;
+      if      (t > g_tempHot)  g_mood = HOT;
+      else if (t < g_tempCold) g_mood = COLD;
       break;
     case HOT:
-      if (t < TEMP_HOT - TEMP_HYST)  g_mood = COMFY;
+      if (t < g_tempHot - TEMP_HYST)  g_mood = COMFY;
       break;
     case COLD:
-      if (t > TEMP_COLD + TEMP_HYST) g_mood = COMFY;
+      if (t > g_tempCold + TEMP_HYST) g_mood = COMFY;
       break;
   }
 }
@@ -644,7 +650,9 @@ void publishTelemetry() {
   net["rssi"] = WiFi.RSSI();
   net["ip"]   = WiFi.localIP().toString();
 
-  doc["pet"] = petSkinToString(g_petSkin);  // lets the dashboard show what's actually applied
+  doc["pet"]      = petSkinToString(g_petSkin);   // echo what's actually applied
+  doc["pet_hot"]  = g_tempHot;
+  doc["pet_cold"] = g_tempCold;
 
   char payload[384];
   size_t n = serializeJson(doc, payload, sizeof(payload));
@@ -701,14 +709,24 @@ void tickWiFi() {
 void mqttCallback(char* topic, byte* payload, unsigned int len) {
   JsonDocument doc;
   if (deserializeJson(doc, payload, len)) return;   // malformed, ignore
-  if (doc["pet"].isNull()) return;
 
-  PetSkin skin = petSkinFromString(doc["pet"].as<String>());
-  g_petSkin = skin;
   prefs.begin("aqua", false);
-  prefs.putString("pet", petSkinToString(skin));
+  if (!doc["pet"].isNull()) {
+    g_petSkin = petSkinFromString(doc["pet"].as<String>());
+    prefs.putString("pet", petSkinToString(g_petSkin));
+    Serial.printf("[MQTT] pet skin -> %s\n", petSkinToString(g_petSkin));
+  }
+  if (!doc["pet_hot"].isNull()) {
+    g_tempHot = doc["pet_hot"].as<float>();
+    prefs.putFloat("thi", g_tempHot);
+    Serial.printf("[MQTT] pet hot -> %.1f\n", g_tempHot);
+  }
+  if (!doc["pet_cold"].isNull()) {
+    g_tempCold = doc["pet_cold"].as<float>();
+    prefs.putFloat("tlo", g_tempCold);
+    Serial.printf("[MQTT] pet cold -> %.1f\n", g_tempCold);
+  }
   prefs.end();
-  Serial.printf("[MQTT] pet skin -> %s\n", petSkinToString(skin));
 }
 
 void tickMqtt() {
