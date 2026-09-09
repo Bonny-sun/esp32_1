@@ -56,7 +56,7 @@ COLOR = {
 }
 PET_LABEL = {"drop": "水滴", "fish": "魚", "cat": "貓", "panda": "熊貓"}   # value must match firmware's petSkinFromString()
 RANGE_HOURS = {"24 小時": 24, "7 天": 168, "30 天": 720}
-ANOM_METRICS = {  # 近期異常的項目篩選
+METRIC_FILTERS = {  # 「近期異常」「上次預測 vs 實際」的項目篩選
     "溫度": ["temperature"],
     "濕度": ["humidity"],
     "溫溼度": ["temperature", "humidity"],
@@ -292,6 +292,7 @@ def main_page() -> None:
         "device_id": ids[0],
         "range_label": "24 小時",
         "anom_metric": "溫溼度",
+        "fc_metric": "溫溼度",
         "unlocked": not DASH_PASSWORD,
     }
 
@@ -374,7 +375,9 @@ def main_page() -> None:
                 "尚無預測。執行 analysis/baseline.py（或等排程）後會出現。"
             ).classes("text-gray-500")
             return
-        latest = fc.sort_values("created_at").groupby("metric").tail(1)
+        wanted = METRIC_FILTERS[state["fc_metric"]]
+        wanted_labels = [LABEL.get(k, k) for k in wanted]
+        latest = fc[fc["metric"].isin(wanted)].sort_values("created_at").groupby("metric").tail(1)
         with ui.row().classes("w-full gap-4 flex-wrap"):
             for _, r in latest.iterrows():
                 m = r["metric"]
@@ -397,6 +400,8 @@ def main_page() -> None:
         ).classes("text-xs text-gray-400")
 
         ev = load_forecast_eval(state["device_id"])
+        if not ev.empty:
+            ev = ev[ev["metric"].isin(wanted_labels)]
         if ev.empty:
             return
         ui.label("上次預測 vs 實際").classes("text-sm text-gray-500 mt-3")
@@ -474,7 +479,7 @@ def main_page() -> None:
     @ui.refreshable
     def anomalies_section():
         an = load_anomalies(state["device_id"])
-        wanted = ANOM_METRICS[state["anom_metric"]]
+        wanted = METRIC_FILTERS[state["anom_metric"]]
         if not an.empty:
             an = an[an["metric"].isin(wanted)]
         if not an.empty:
@@ -580,6 +585,10 @@ def main_page() -> None:
         state["anom_metric"] = e.value
         anomalies_section.refresh()
 
+    def on_fc_metric_change(e):
+        state["fc_metric"] = e.value
+        forecast_section.refresh()
+
     def on_refresh_click():
         clear_cache()
         refresh_all()
@@ -596,6 +605,11 @@ def main_page() -> None:
         metrics_section()
 
         ui.label("AI 預測").classes("text-lg font-semibold mt-2")
+        ui.toggle(
+            list(METRIC_FILTERS.keys()),
+            value=state["fc_metric"],
+            on_change=on_fc_metric_change,
+        )
         forecast_section()
 
         ui.label("歷史趨勢").classes("text-lg font-semibold mt-2")
@@ -604,7 +618,7 @@ def main_page() -> None:
 
         ui.label("近期異常").classes("text-lg font-semibold mt-2")
         ui.toggle(
-            list(ANOM_METRICS.keys()),
+            list(METRIC_FILTERS.keys()),
             value=state["anom_metric"],
             on_change=on_anom_metric_change,
         )
