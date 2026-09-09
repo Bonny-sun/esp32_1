@@ -384,126 +384,123 @@ void drawPetFish() {
   }
 }
 
-// Cat and panda share this "cute portrait" template — big round head, ears
-// as an overlapping circle so the silhouette stays smooth (no separate
-// pointy shape to look "off"), big simple dot eyes, minimal mouth, no
-// body/tail/whiskers. Only the ear fill and a tiny nose differ between them.
+// --- Cat: round head, POINTED triangular ears, and white whiskers that
+// stick out past the face into the black background — the two cues that
+// actually make a 48px blob read as "cat". ---
 void drawPetCat() {
   const bool blink = (millis() % 4000) < 150;
   int dx = 0;
   if (g_mood == COLD) dx = ((millis() / 70) % 2) ? -1 : 1;   // shiver jitter
   const int cx = 23 + dx;
-  const int cy = 30;
+  const int cy = 32;
 
-  // --- head + ears: same fill as the head, so they melt into one smooth
-  // rounded silhouette instead of reading as separate spikes ---
   u8g2.setDrawColor(1);
-  u8g2.drawDisc(cx, cy, 15);
-  u8g2.drawDisc(cx - 10, 14, 7);
-  u8g2.drawDisc(cx + 10, 14, 7);
+  // pointed ears (white), overlapping the head top
+  u8g2.drawTriangle(cx - 15, 25, cx - 3, 25, cx - 13, 9);
+  u8g2.drawTriangle(cx + 3, 25, cx + 15, 25, cx + 13, 9);
+  u8g2.drawDisc(cx, cy, 13);                                 // head
 
-  // --- face, punched in black ---
+  // inner ears (black)
   u8g2.setDrawColor(0);
-  if (g_mood == HOT) {                         // dizzy X eyes
+  u8g2.drawTriangle(cx - 12, 23, cx - 6, 23, cx - 11, 13);
+  u8g2.drawTriangle(cx + 6, 23, cx + 12, 23, cx + 11, 13);
+
+  // eyes
+  if (g_mood == HOT) {                                       // dizzy X
     u8g2.drawLine(cx - 10, cy - 5, cx - 4, cy + 1); u8g2.drawLine(cx - 10, cy + 1, cx - 4, cy - 5);
-    u8g2.drawLine(cx + 4,  cy - 5, cx + 10, cy + 1); u8g2.drawLine(cx + 4,  cy + 1, cx + 10, cy - 5);
-  } else {                                     // COMFY / COLD share open-eyed base
-    if (blink) {
-      u8g2.drawHLine(cx - 10, cy - 2, 6);
-      u8g2.drawHLine(cx + 4,  cy - 2, 6);
-    } else {
-      u8g2.drawDisc(cx - 7, cy - 2, 3);
-      u8g2.drawDisc(cx + 7, cy - 2, 3);
-    }
-    if (g_mood == COLD) {                      // angry/cold eyebrows
-      u8g2.drawLine(cx - 10, cy - 7, cx - 4, cy - 4);
-      u8g2.drawLine(cx + 4,  cy - 4, cx + 10, cy - 7);
-    }
-  }
-
-  // mouth
-  if (g_mood == HOT) {
-    u8g2.drawDisc(cx, cy + 9, 3);                                    // panting
-  } else if (g_mood == COLD) {                                       // gritted zigzag
-    u8g2.drawLine(cx - 4, cy + 7, cx - 2, cy + 9); u8g2.drawLine(cx - 2, cy + 9, cx, cy + 7);
-    u8g2.drawLine(cx,     cy + 7, cx + 2, cy + 9); u8g2.drawLine(cx + 2, cy + 9, cx + 4, cy + 7);
+    u8g2.drawLine(cx + 4, cy - 5, cx + 10, cy + 1);  u8g2.drawLine(cx + 4, cy + 1, cx + 10, cy - 5);
+  } else if (blink) {
+    u8g2.drawHLine(cx - 10, cy - 2, 6);
+    u8g2.drawHLine(cx + 4, cy - 2, 6);
   } else {
-    u8g2.drawLine(cx - 4, cy + 7, cx, cy + 5); u8g2.drawLine(cx, cy + 5, cx + 4, cy + 7);  // smile
+    u8g2.drawDisc(cx - 7, cy - 2, 3);
+    u8g2.drawDisc(cx + 7, cy - 2, 3);
+  }
+  if (g_mood == COLD) {                                      // frown brows
+    u8g2.drawLine(cx - 11, cy - 8, cx - 4, cy - 5);
+    u8g2.drawLine(cx + 4, cy - 5, cx + 11, cy - 8);
   }
 
-  // --- mood extras (white) ---
+  // nose (little triangle) + mouth
+  u8g2.drawTriangle(cx - 2, cy + 3, cx + 2, cy + 3, cx, cy + 6);
+  if (g_mood == HOT) {
+    u8g2.drawDisc(cx, cy + 9, 2);
+  } else {                                                   // ω mouth
+    u8g2.drawLine(cx, cy + 6, cx - 3, cy + 9);
+    u8g2.drawLine(cx, cy + 6, cx + 3, cy + 9);
+  }
+
+  // whiskers — white, out past the cheeks
   u8g2.setDrawColor(1);
+  for (int i = -1; i <= 1; i++) {
+    u8g2.drawLine(cx - 9, cy + 2 + i * 3, cx - 21, cy + i * 5);
+    u8g2.drawLine(cx + 9, cy + 2 + i * 3, cx + 21, cy + i * 5);
+  }
+
+  // mood extras (white)
   if (g_mood == HOT) {
     int sy = 2 + (int)((millis() / 150) % 8);
-    u8g2.drawDisc(cx + 15, sy, 2);                                    // sweat drop
-    u8g2.drawLine(cx - 14, 4, cx - 11, 2); u8g2.drawLine(cx - 11, 2, cx - 8, 4);  // heat wiggle
+    u8g2.drawDisc(cx + 16, sy, 2);
+    u8g2.drawLine(cx - 15, 4, cx - 12, 2); u8g2.drawLine(cx - 12, 2, cx - 9, 4);
   } else if (g_mood == COLD) {
-    u8g2.drawLine(2, cy - 6, 6, cy - 8);  u8g2.drawLine(2, cy - 2, 6, cy - 4);    // shiver marks
-    u8g2.drawLine(40, cy - 6, 44, cy - 4); u8g2.drawLine(40, cy - 2, 44, cy);
-    u8g2.drawTriangle(cx - 13, 16, cx - 9, 16, cx - 11, 22);          // icicles off the ears
-    u8g2.drawTriangle(cx + 9,  16, cx + 13, 16, cx + 11, 22);
+    u8g2.drawLine(2, cy - 4, 6, cy - 6);  u8g2.drawLine(2, cy + 1, 6, cy - 1);
+    u8g2.drawLine(40, cy - 4, 44, cy - 2); u8g2.drawLine(40, cy + 1, 44, cy + 3);
   }
 }
 
+// --- Panda: white head, round BLACK ears with a thin white rim (so they
+// read on the black background), and the signature tilted BLACK eye
+// patches with a white pupil dot inside each. ---
 void drawPetPanda() {
   const bool blink = (millis() % 4000) < 150;
   int dx = 0;
   if (g_mood == COLD) dx = ((millis() / 70) % 2) ? -1 : 1;   // shiver jitter
   const int cx = 23 + dx;
-  const int cy = 30;
+  const int cy = 32;
 
-  // --- head, then black ears sunk mostly into it. The visible edge is only
-  // the black-on-white boundary where they overlap the head; the rest of
-  // each ear circle blends into the (also black) background, same as the
-  // reference art — no white ring needed. ---
   u8g2.setDrawColor(1);
-  u8g2.drawDisc(cx, cy, 15);
+  u8g2.drawDisc(cx, cy, 14);                                 // head
+  u8g2.drawDisc(cx - 12, 15, 6);                             // ear discs (white rim)
+  u8g2.drawDisc(cx + 12, 15, 6);
   u8g2.setDrawColor(0);
-  u8g2.drawDisc(cx - 11, 16, 8);
-  u8g2.drawDisc(cx + 11, 16, 8);
+  u8g2.drawDisc(cx - 12, 15, 4);                             // ear cores (black)
+  u8g2.drawDisc(cx + 12, 15, 4);
 
-  // --- face, punched in black — identical template to the cat, plus a
-  // tiny nose, since that's the only other panda-vs-cat cue in the ref ---
-  u8g2.setDrawColor(0);
-  if (g_mood == HOT) {                         // dizzy X eyes
-    u8g2.drawLine(cx - 10, cy - 5, cx - 4, cy + 1); u8g2.drawLine(cx - 10, cy + 1, cx - 4, cy - 5);
-    u8g2.drawLine(cx + 4,  cy - 5, cx + 10, cy + 1); u8g2.drawLine(cx + 4,  cy + 1, cx + 10, cy - 5);
-  } else {                                     // COMFY / COLD share open-eyed base
-    if (blink) {
-      u8g2.drawHLine(cx - 10, cy - 2, 6);
-      u8g2.drawHLine(cx + 4,  cy - 2, 6);
-    } else {
-      u8g2.drawDisc(cx - 7, cy - 2, 3);
-      u8g2.drawDisc(cx + 7, cy - 2, 3);
-    }
-    if (g_mood == COLD) {                      // angry/cold eyebrows
-      u8g2.drawLine(cx - 10, cy - 7, cx - 4, cy - 4);
-      u8g2.drawLine(cx + 4,  cy - 4, cx + 10, cy - 7);
-    }
+  // eye patches — black, teardrop tilted down-and-outward
+  u8g2.drawDisc(cx - 6, cy - 3, 5);  u8g2.drawDisc(cx - 9, cy + 1, 3);
+  u8g2.drawDisc(cx + 6, cy - 3, 5);  u8g2.drawDisc(cx + 9, cy + 1, 3);
+
+  // pupils / eye state — white, inside the patches
+  u8g2.setDrawColor(1);
+  if (g_mood == HOT) {                                       // dizzy X
+    u8g2.drawLine(cx - 8, cy - 5, cx - 4, cy - 1); u8g2.drawLine(cx - 8, cy - 1, cx - 4, cy - 5);
+    u8g2.drawLine(cx + 4, cy - 5, cx + 8, cy - 1); u8g2.drawLine(cx + 4, cy - 1, cx + 8, cy - 5);
+  } else if (!blink) {                                       // (blink: no dot -> looks shut)
+    u8g2.drawDisc(cx - 6, cy - 3, 2);
+    u8g2.drawDisc(cx + 6, cy - 3, 2);
   }
-  u8g2.drawDisc(cx, cy + 1, 1);                 // nose
 
-  // mouth
+  // nose + mouth (black)
+  u8g2.setDrawColor(0);
+  u8g2.drawDisc(cx, cy + 5, 2);
+  u8g2.drawVLine(cx, cy + 6, 3);
   if (g_mood == HOT) {
-    u8g2.drawDisc(cx, cy + 9, 3);                                    // panting
-  } else if (g_mood == COLD) {                                       // gritted zigzag
-    u8g2.drawLine(cx - 4, cy + 7, cx - 2, cy + 9); u8g2.drawLine(cx - 2, cy + 9, cx, cy + 7);
-    u8g2.drawLine(cx,     cy + 7, cx + 2, cy + 9); u8g2.drawLine(cx + 2, cy + 9, cx + 4, cy + 7);
+    u8g2.drawDisc(cx, cy + 11, 2);
+  } else if (g_mood == COLD) {
+    u8g2.drawBox(cx - 3, cy + 9, 6, 2);                      // flat gritted mouth
   } else {
-    u8g2.drawLine(cx - 4, cy + 7, cx, cy + 5); u8g2.drawLine(cx, cy + 5, cx + 4, cy + 7);  // smile
+    u8g2.drawLine(cx - 4, cy + 9, cx, cy + 11); u8g2.drawLine(cx, cy + 11, cx + 4, cy + 9);  // smile
   }
 
-  // --- mood extras (white) ---
+  // mood extras (white)
   u8g2.setDrawColor(1);
   if (g_mood == HOT) {
     int sy = 2 + (int)((millis() / 150) % 8);
-    u8g2.drawDisc(cx + 15, sy, 2);                                    // sweat drop
-    u8g2.drawLine(cx - 14, 4, cx - 11, 2); u8g2.drawLine(cx - 11, 2, cx - 8, 4);  // heat wiggle
+    u8g2.drawDisc(cx + 16, sy, 2);
+    u8g2.drawLine(cx - 15, 4, cx - 12, 2); u8g2.drawLine(cx - 12, 2, cx - 9, 4);
   } else if (g_mood == COLD) {
-    u8g2.drawLine(2, cy - 6, 6, cy - 8);  u8g2.drawLine(2, cy - 2, 6, cy - 4);    // shiver marks
-    u8g2.drawLine(40, cy - 6, 44, cy - 4); u8g2.drawLine(40, cy - 2, 44, cy);
-    u8g2.drawTriangle(cx - 14, 17, cx - 10, 17, cx - 12, 23);         // icicles off the ears
-    u8g2.drawTriangle(cx + 10, 17, cx + 14, 17, cx + 12, 23);
+    u8g2.drawLine(2, cy - 4, 6, cy - 6);  u8g2.drawLine(2, cy + 1, 6, cy - 1);
+    u8g2.drawLine(40, cy - 4, 44, cy - 2); u8g2.drawLine(40, cy + 1, 44, cy + 3);
   }
 }
 
