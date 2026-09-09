@@ -117,6 +117,13 @@ def load_latest(device_id: str):
 
 
 @cached(30)
+def load_all_latest() -> dict:
+    """{device_id: latest row} for every device — for the multi-board overview."""
+    rows = sb().table("aqua_latest").select("*").execute().data
+    return {r["device_id"]: r for r in rows}
+
+
+@cached(30)
 def load_history(device_id: str, hours: int) -> pd.DataFrame:
     raw = hours <= 48
     table = "aqua_telemetry" if raw else "aqua_telemetry_hourly"
@@ -299,7 +306,61 @@ def main_page() -> None:
     def device() -> dict:
         return next(d for d in devices if d["device_id"] == state["device_id"])
 
+    dev_select = None  # set when the layout is built; kept in sync by select_device
+
+    def select_device(did: str) -> None:
+        state["device_id"] = did
+        state["unlocked"] = not DASH_PASSWORD
+        if dev_select is not None:
+            dev_select.value = did
+        refresh_all()
+
+    def _out_of_band(v, thr_row) -> bool:
+        if v is None or not thr_row or not thr_row.get("enabled"):
+            return False
+        lo, hi = thr_row.get("min_val"), thr_row.get("max_val")
+        return (lo is not None and float(v) < float(lo)) or (hi is not None and float(v) > float(hi))
+
     # ------------------------------------------------------ 各區塊(可局部刷新)
+    @ui.refreshable
+    def overview_section():
+        devs = load_devices()
+        if len(devs) < 2:
+            return  # 只有一台時不用總覽
+        latest_map = load_all_latest()
+        ui.label("裝置總覽（點卡片切換下方詳細檢視）").classes("text-lg font-semibold")
+        with ui.row().classes("w-full gap-3 flex-wrap"):
+            for d in devs:
+                did = d["device_id"]
+                lt = latest_map.get(did, {})
+                thr = load_thresholds(did)
+                ls = d.get("last_seen")
+                online = bool(
+                    ls
+                    and (
+                        datetime.now(timezone.utc)
+                        - pd.to_datetime(ls, utc=True, format="ISO8601")
+                    ).total_seconds() < 300
+                )
+                sel = did == state["device_id"]
+                card = ui.card().classes(
+                    "min-w-[190px] flex-1 items-start cursor-pointer "
+                    + ("border-2 border-sky-500" if sel else "border border-gray-200")
+                )
+                card.on("click", lambda did=did: select_device(did))
+                with card:
+                    ui.label(f"{'🟢' if online else '🔴'} {d.get('name') or did}").classes(
+                        "text-sm font-medium"
+                    )
+                    with ui.row().classes("gap-4 items-baseline"):
+                        for m in ("temperature", "humidity"):
+                            v = lt.get(m)
+                            if v is None:
+                                continue
+                            suffix = f" {UNIT[m]}" if UNIT[m] else ""
+                            colour = "text-red-600" if _out_of_band(v, thr.get(m)) else "text-sky-700"
+                            ui.label(f"{v}{suffix}").classes(f"text-lg font-bold {colour}")
+
     @ui.refreshable
     def status_section():
         dev = device()
@@ -355,11 +416,8 @@ def main_page() -> None:
                     continue
                 suffix = f" {UNIT[m]}" if UNIT[m] else ""
                 t = thr.get(m) or {}
+                out_of_band = _out_of_band(v, t)
                 lo, hi = t.get("min_val"), t.get("max_val")
-                out_of_band = bool(t.get("enabled")) and (
-                    (lo is not None and float(v) < float(lo))
-                    or (hi is not None and float(v) > float(hi))
-                )
                 colour = "text-red-600" if out_of_band else "text-sky-700"
                 with ui.card().classes("min-w-[140px] flex-1 items-start"):
                     ui.label(LABEL.get(m, m)).classes("text-sm text-gray-500")
@@ -564,6 +622,7 @@ def main_page() -> None:
 
     # ------------------------------------------------------------- 事件處理
     def refresh_all():
+        overview_section.refresh()
         status_section.refresh()
         pet_section.refresh()
         metrics_section.refresh()
@@ -599,7 +658,10 @@ def main_page() -> None:
         ui.button(icon="refresh", on_click=on_refresh_click).props("flat round color=white")
 
     with ui.column().classes("w-full max-w-3xl mx-auto p-4 gap-5"):
-        ui.select(ids, value=state["device_id"], label="裝置", on_change=on_device_change).classes("w-56")
+        overview_section()
+        dev_select = ui.select(
+            ids, value=state["device_id"], label="詳細檢視裝置", on_change=on_device_change
+        ).classes("w-56")
         status_section()
         pet_section()
         metrics_section()
