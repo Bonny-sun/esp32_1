@@ -346,15 +346,25 @@ def main_page() -> None:
         if not latest:
             ui.label("尚無感測資料。").classes("text-gray-500")
             return
+        thr = load_thresholds(state["device_id"])
         with ui.row().classes("w-full gap-4 flex-wrap"):
             for m in METRICS:
                 v = latest.get(m)
                 if v is None:
                     continue
                 suffix = f" {UNIT[m]}" if UNIT[m] else ""
+                t = thr.get(m) or {}
+                lo, hi = t.get("min_val"), t.get("max_val")
+                out_of_band = bool(t.get("enabled")) and (
+                    (lo is not None and float(v) < float(lo))
+                    or (hi is not None and float(v) > float(hi))
+                )
+                colour = "text-red-600" if out_of_band else "text-sky-700"
                 with ui.card().classes("min-w-[140px] flex-1 items-start"):
                     ui.label(LABEL.get(m, m)).classes("text-sm text-gray-500")
-                    ui.label(f"{v}{suffix}").classes("text-2xl font-bold text-sky-700")
+                    ui.label(f"{v}{suffix}").classes(f"text-2xl font-bold {colour}")
+                    if out_of_band:
+                        ui.label(f"⚠ 超出範圍 [{lo} – {hi}]").classes("text-xs text-red-600")
 
     @ui.refreshable
     def forecast_section():
@@ -537,7 +547,9 @@ def main_page() -> None:
                 payload = {m: (mn.value, mx.value, en.value) for m, (mn, mx, en) in edits.items()}
                 save_thresholds(state["device_id"], payload)
                 ui.notify("已儲存。", type="positive")
+                clear_cache()
                 thresholds_section.refresh()
+                metrics_section.refresh()
 
             ui.button("儲存", on_click=do_save)
         ui.label(
