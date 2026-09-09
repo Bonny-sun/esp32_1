@@ -30,7 +30,7 @@ on conflict (device_id, metric) do nothing;
 -- ---------------------------------------------------------------------------
 --  Cloud-side alerting: compare the latest reading per device+metric against
 --  its band; log to aqua_anomalies (method='threshold'), deduped to at most
---  one per device+metric per 10 minutes.
+--  one per device+metric per HOUR (an ongoing breach shouldn't spam the log).
 -- ---------------------------------------------------------------------------
 create or replace function public.aqua_check_thresholds()
 returns void language plpgsql as $fn$
@@ -61,7 +61,7 @@ begin
       select 1 from public.aqua_anomalies
       where device_id = r.device_id and metric = r.metric
         and method = 'threshold'
-        and created_at > now() - interval '10 minutes'
+        and created_at > now() - interval '1 hour'
     ) then
       insert into public.aqua_anomalies (device_id, ts, metric, value, score, method, note)
       values (r.device_id, r.ts, r.metric, r.val, null, 'threshold',

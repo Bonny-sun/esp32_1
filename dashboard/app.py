@@ -56,6 +56,11 @@ COLOR = {
 }
 PET_LABEL = {"drop": "水滴", "fish": "魚", "cat": "貓", "panda": "熊貓"}   # value must match firmware's petSkinFromString()
 RANGE_HOURS = {"24 小時": 24, "7 天": 168, "30 天": 720}
+ANOM_METRICS = {  # 近期異常的項目篩選
+    "溫度": ["temperature"],
+    "濕度": ["humidity"],
+    "溫溼度": ["temperature", "humidity"],
+}
 
 MQTT_HOST = os.environ.get("MQTT_HOST", "")
 MQTT_PORT = int(os.environ.get("MQTT_PORT", "8883"))
@@ -286,6 +291,7 @@ def main_page() -> None:
     state = {
         "device_id": ids[0],
         "range_label": "24 小時",
+        "anom_metric": "溫溼度",
         "unlocked": not DASH_PASSWORD,
     }
 
@@ -458,6 +464,16 @@ def main_page() -> None:
     @ui.refreshable
     def anomalies_section():
         an = load_anomalies(state["device_id"])
+        wanted = ANOM_METRICS[state["anom_metric"]]
+        if not an.empty:
+            an = an[an["metric"].isin(wanted)]
+        if not an.empty:
+            # 一小時一筆:同一(項目, 方法, 整點)只保留最新那筆
+            an = an.assign(_hour=an["ts"].dt.floor("h"))
+            an = (
+                an.sort_values("ts", ascending=False)
+                .drop_duplicates(subset=["metric", "method", "_hour"])
+            )
         if an.empty:
             with ui.row().classes("items-center gap-2 text-green-600"):
                 ui.icon("check_circle")
@@ -525,7 +541,8 @@ def main_page() -> None:
 
             ui.button("儲存", on_click=do_save)
         ui.label(
-            "雲端每分鐘檢查一次(aqua_check_thresholds);超出範圍會出現在上方,方法顯示 threshold。"
+            "雲端每分鐘檢查一次(aqua_check_thresholds),持續超標最多每小時記一筆,"
+            "顯示在「近期異常」的「超出範圍」。"
         ).classes("text-xs text-gray-400 mt-1")
 
     # ------------------------------------------------------------- 事件處理
@@ -546,6 +563,10 @@ def main_page() -> None:
     def on_range_change(e):
         state["range_label"] = e.value
         history_section.refresh()
+
+    def on_anom_metric_change(e):
+        state["anom_metric"] = e.value
+        anomalies_section.refresh()
 
     def on_refresh_click():
         clear_cache()
@@ -570,6 +591,12 @@ def main_page() -> None:
         history_section()
 
         ui.label("近期異常").classes("text-lg font-semibold mt-2")
+        ui.toggle(
+            list(ANOM_METRICS.keys()),
+            value=state["anom_metric"],
+            on_change=on_anom_metric_change,
+        )
+        ui.label("每個整點最多一筆").classes("text-xs text-gray-400")
         anomalies_section()
 
         ui.label("警戒範圍").classes("text-lg font-semibold mt-2")
