@@ -35,4 +35,4 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-          DEVICE_ID: esp32-aqua-01
+          # unset -> baseline.py processes every device in aqua_devices
