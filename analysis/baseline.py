@@ -41,7 +41,10 @@ except ImportError:
 # --------------------------------------------------------------------------
 SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_KEY = os.environ["SUPABASE_SERVICE_KEY"]
-DEVICE_ID = os.environ.get("DEVICE_ID", "esp32-aqua-01")
+# Set DEVICE_ID to restrict a run to one device (handy for local testing).
+# Unset (the default in CI) -> every device in aqua_devices gets processed,
+# so adding a 2nd/3rd device needs no code or workflow change.
+DEVICE_ID = os.environ.get("DEVICE_ID", "")
 
 # >>> the single knob that grows with the hardware <<<
 FEATURE_COLS = ["temperature", "humidity"]
@@ -106,7 +109,7 @@ def build_features(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
 
 
 # ---- 3a. baseline forecast: EWMA + linear drift ------------------
-def forecast(out: pd.DataFrame, col: str, steps: int) -> dict:
+def forecast(device_id: str, out: pd.DataFrame, col: str, steps: int) -> dict:
     series = out[col].dropna()
     ewma = series.ewm(span=ROLL_WIN).mean().iloc[-1]
     drift = series.diff().tail(ROLL_WIN).mean()
@@ -114,7 +117,7 @@ def forecast(out: pd.DataFrame, col: str, steps: int) -> dict:
     yhat = float(ewma + drift * steps)
     target = out.index[-1] + pd.Timedelta(RESAMPLE) * steps
     return {
-        "device_id": DEVICE_ID,
+        "device_id": device_id,
         "metric": col,
         "horizon_min": steps * 5,
         "ts_target": target.isoformat(),
@@ -126,7 +129,7 @@ def forecast(out: pd.DataFrame, col: str, steps: int) -> dict:
 
 
 # ---- 3b. anomaly detection: univariate now, multivariate later ---
-def detect_univariate(out: pd.DataFrame, cols: list[str]) -> list[dict]:
+def detect_univariate(device_id: str, out: pd.DataFrame, cols: list[str]) -> list[dict]:
     hits: list[dict] = []
     for c in cols:
         dev = out[c] - out[f"{c}_roll_mean"]
@@ -136,7 +139,7 @@ def detect_univariate(out: pd.DataFrame, cols: list[str]) -> list[dict]:
         for t in out.index[mask]:
             hits.append(
                 {
-                    "device_id": DEVICE_ID,
+                    "device_id": device_id,
                     "ts": t.isoformat(),
                     "metric": c,
                     "value": float(out.loc[t, c]),
@@ -147,7 +150,7 @@ def detect_univariate(out: pd.DataFrame, cols: list[str]) -> list[dict]:
     return hits
 
 
-def detect_multivariate(out: pd.DataFrame, cols: list[str]) -> list[dict]:
+def detect_multivariate(device_id: str, out: pd.DataFrame, cols: list[str]) -> list[dict]:
     from sklearn.ensemble import IsolationForest
 
     x = out[cols].dropna()
@@ -158,7 +161,7 @@ def detect_multivariate(out: pd.DataFrame, cols: list[str]) -> list[dict]:
     score = model.score_samples(x)
     return [
         {
-            "device_id": DEVICE_ID,
+            "device_id": device_id,
             "ts": t.isoformat(),
             "metric": "multivariate",
             "value": None,
@@ -176,30 +179,49 @@ def save(table: str, rows: list[dict]) -> None:
         sb.table(table).insert(rows).execute()
 
 
-# ---- main ----------------------------------------------------------
-def main() -> None:
-    df = load_history(DEVICE_ID, LOOKBACK_H)
+def list_device_ids() -> list[str]:
+    """DEVICE_ID env var restricts a run to one device (local testing).
+    Otherwise every device in aqua_devices is processed, so a 2nd/3rd
+    device starts getting forecasts automatically once it's registered."""
+    if DEVICE_ID:
+        return [DEVICE_ID]
+    rows = sb.table("aqua_devices").select("device_id").execute().data
+    return [r["device_id"] for r in rows]
+
+
+def process_device(device_id: str) -> None:
+    df = load_history(device_id, LOOKBACK_H)
     if df.empty:
-        print("no telemetry yet — collect some data first")
+        print(f"[{device_id}] no telemetry yet — collect some data first")
         return
 
     feats = build_features(df, FEATURE_COLS)
-    print(f"{len(feats)} resampled rows | features = {FEATURE_COLS}")
+    print(f"[{device_id}] {len(feats)} resampled rows | features = {FEATURE_COLS}")
 
-    forecasts = [forecast(feats, c, HORIZON_STEPS) for c in FEATURE_COLS]
+    forecasts = [forecast(device_id, feats, c, HORIZON_STEPS) for c in FEATURE_COLS]
     for f in forecasts:
         print(
-            f"  forecast {f['metric']:14s} +{f['horizon_min']:>3}min -> "
+            f"  [{device_id}] forecast {f['metric']:14s} +{f['horizon_min']:>3}min -> "
             f"{f['yhat']:>7}  [{f['yhat_lower']}, {f['yhat_upper']}]"
         )
     save("aqua_forecasts", forecasts)
 
     if len(FEATURE_COLS) >= 3:
-        anomalies = detect_multivariate(feats, FEATURE_COLS)
+        anomalies = detect_multivariate(device_id, feats, FEATURE_COLS)
     else:
-        anomalies = detect_univariate(feats, FEATURE_COLS)
-    print(f"  {len(anomalies)} anomalies")
+        anomalies = detect_univariate(device_id, feats, FEATURE_COLS)
+    print(f"  [{device_id}] {len(anomalies)} anomalies")
     save("aqua_anomalies", anomalies)
+
+
+# ---- main ----------------------------------------------------------
+def main() -> None:
+    device_ids = list_device_ids()
+    if not device_ids:
+        print("no devices registered in aqua_devices")
+        return
+    for device_id in device_ids:
+        process_device(device_id)
 
 
 if __name__ == "__main__":
