@@ -179,6 +179,30 @@ def save(table: str, rows: list[dict]) -> None:
         sb.table(table).insert(rows).execute()
 
 
+def dedupe_anomalies(device_id: str, rows: list[dict]) -> list[dict]:
+    """detect_univariate/detect_multivariate re-scan the whole LOOKBACK_H
+    window every run (a run every 30 min, a 72h window -> up to ~144 runs
+    see the same point), so without this the same anomaly gets a fresh
+    duplicate row inserted on every single run until it ages out of the
+    window. Skip anything already stored for this device/metric/method/ts."""
+    if not rows:
+        return rows
+    ts_values = [r["ts"] for r in rows]
+    since, until = min(ts_values), max(ts_values)
+    existing = (
+        sb.table("aqua_anomalies").select("ts,metric,method")
+        .eq("device_id", device_id).gte("ts", since).lte("ts", until).execute().data
+    )
+    # Compare by parsed instant (pandas Timestamp.value), not raw string —
+    # Postgres may echo the timestamp back with different precision/format
+    # than the isoformat() string that was inserted.
+    seen = {(pd.Timestamp(e["ts"]).value, e["metric"], e["method"]) for e in existing}
+    return [
+        r for r in rows
+        if (pd.Timestamp(r["ts"]).value, r["metric"], r["method"]) not in seen
+    ]
+
+
 def list_device_ids() -> list[str]:
     """DEVICE_ID env var restricts a run to one device (local testing).
     Otherwise every device in aqua_devices is processed, so a 2nd/3rd
@@ -210,7 +234,8 @@ def process_device(device_id: str) -> None:
         anomalies = detect_multivariate(device_id, feats, FEATURE_COLS)
     else:
         anomalies = detect_univariate(device_id, feats, FEATURE_COLS)
-    print(f"  [{device_id}] {len(anomalies)} anomalies")
+    anomalies = dedupe_anomalies(device_id, anomalies)
+    print(f"  [{device_id}] {len(anomalies)} new anomalies")
     save("aqua_anomalies", anomalies)
 
 
