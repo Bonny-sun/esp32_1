@@ -163,7 +163,7 @@ def load_history(device_id: str, hours: int) -> pd.DataFrame:
 
 
 @cached(30)
-def load_anomalies(device_id: str, limit: int = 50) -> pd.DataFrame:
+def load_anomalies(device_id: str, limit: int = 1000) -> pd.DataFrame:
     rows = (
         sb().table("aqua_anomalies").select("*").eq("device_id", device_id)
         .order("ts", desc=True).limit(limit).execute().data
@@ -306,6 +306,7 @@ def main_page() -> None:
         "device_id": ids[0],
         "range_label": "24 小時",
         "anom_metric": "溫溼度",
+        "anom_date": "全部",
         "fc_metric": "溫溼度",
         "unlocked": not DASH_PASSWORD,
     }
@@ -571,6 +572,24 @@ def main_page() -> None:
                 an.sort_values("ts", ascending=False)
                 .drop_duplicates(subset=["metric", "method", "_hour"])
             )
+
+        # 日期篩選:選項跟著目前(項目篩選後)實際有資料的日期走
+        dates = sorted(an["ts"].dt.strftime("%Y-%m-%d").unique(), reverse=True) if not an.empty else []
+        date_options = ["全部"] + dates
+        if state["anom_date"] not in date_options:
+            state["anom_date"] = "全部"
+
+        def on_date_change(e):
+            state["anom_date"] = e.value
+            anomalies_section.refresh()
+
+        ui.select(date_options, value=state["anom_date"], label="日期", on_change=on_date_change).classes(
+            "w-40"
+        )
+        ui.label("每個整點最多一筆").classes("text-xs text-gray-400")
+        if state["anom_date"] != "全部" and not an.empty:
+            an = an[an["ts"].dt.strftime("%Y-%m-%d") == state["anom_date"]]
+
         if an.empty:
             with ui.row().classes("items-center gap-2 text-green-600"):
                 ui.icon("check_circle")
@@ -708,7 +727,6 @@ def main_page() -> None:
             value=state["anom_metric"],
             on_change=on_anom_metric_change,
         )
-        ui.label("每個整點最多一筆").classes("text-xs text-gray-400")
         anomalies_section()
 
         ui.label("警戒範圍").classes("text-lg font-semibold mt-2")
