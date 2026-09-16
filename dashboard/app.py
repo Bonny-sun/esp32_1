@@ -306,7 +306,9 @@ def main_page() -> None:
         "device_id": ids[0],
         "range_label": "24 小時",
         "anom_metric": "溫溼度",
-        "anom_date": "全部",
+        # default to today (Asia/Taipei); falls back to 全部 if today has no
+        # rows yet (see the date_options guard in anomalies_section)
+        "anom_date": (datetime.now(timezone.utc) + timedelta(hours=8)).strftime("%Y-%m-%d"),
         "fc_metric": "溫溼度",
         "unlocked": not DASH_PASSWORD,
     }
