@@ -242,6 +242,24 @@ def load_forecast_eval(device_id: str, limit: int = 24) -> pd.DataFrame:
     return pd.DataFrame(out)
 
 
+def load_line_paused() -> bool:
+    """Not @cached — this is a manual on/off switch the user just clicked
+    on this same page, so it must read back exactly what was written."""
+    rows = sb().table("aqua_settings").select("value").eq("key", "line_push_paused").execute().data
+    return bool(rows and rows[0]["value"])
+
+
+def set_line_paused(paused: bool) -> None:
+    sb().table("aqua_settings").upsert(
+        {
+            "key": "line_push_paused",
+            "value": paused,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        },
+        on_conflict="key",
+    ).execute()
+
+
 @cached(30)
 def load_thresholds(device_id: str) -> dict:
     rows = sb().table("aqua_thresholds").select("*").eq("device_id", device_id).execute().data
@@ -332,6 +350,20 @@ def main_page() -> None:
         return (lo is not None and float(v) < float(lo)) or (hi is not None and float(v) > float(hi))
 
     # ------------------------------------------------------ 各區塊(可局部刷新)
+    @ui.refreshable
+    def notify_toggle_section():
+        paused = load_line_paused()
+
+        def on_toggle(e):
+            set_line_paused(e.value)
+            ui.notify("已暫停 LINE 推播" if e.value else "已恢復 LINE 推播", type="warning" if e.value else "positive")
+            notify_toggle_section.refresh()
+
+        with ui.row().classes("items-center gap-2"):
+            ui.switch("暫停 LINE 推播", value=paused, on_change=on_toggle)
+            if paused:
+                ui.icon("notifications_off").classes("text-amber-500")
+
     @ui.refreshable
     def overview_section():
         devs = load_devices()
@@ -724,6 +756,7 @@ def main_page() -> None:
 
     # ------------------------------------------------------------- 事件處理
     def refresh_all():
+        notify_toggle_section.refresh()
         overview_section.refresh()
         status_section.refresh()
         pet_section.refresh()
@@ -760,6 +793,7 @@ def main_page() -> None:
         ui.button(icon="refresh", on_click=on_refresh_click).props("flat round color=white")
 
     with ui.column().classes("w-full max-w-3xl mx-auto p-4 gap-5"):
+        notify_toggle_section()
         overview_section()
         dev_select = ui.select(
             ids, value=state["device_id"], label="詳細檢視裝置", on_change=on_device_change

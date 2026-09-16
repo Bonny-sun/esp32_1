@@ -91,10 +91,28 @@ def _fmt_taipei(ts) -> str:
         return str(ts)
 
 
+def line_push_paused() -> bool:
+    """Global kill switch flipped from the dashboard (aqua_settings).
+    Fails open to "not paused" on any DB hiccup — a broken settings read
+    should never silently swallow a real threshold alert."""
+    try:
+        rows = (
+            sb.table("aqua_settings").select("value")
+            .eq("key", "line_push_paused").execute().data
+        )
+        return bool(rows and rows[0]["value"])
+    except Exception as exc:
+        print(f"[line] pause-check failed (assuming not paused): {exc}", flush=True)
+        return False
+
+
 def push_line(text: str) -> None:
     """Broadcast a LINE message to every friend of the Official Account.
-    No-op (silently) if LINE_CHANNEL_TOKEN isn't set."""
+    No-op (silently) if LINE_CHANNEL_TOKEN isn't set or pushes are paused."""
     if not LINE_CHANNEL_TOKEN:
+        return
+    if line_push_paused():
+        print("[line] paused, skipping push", flush=True)
         return
     try:
         resp = requests.post(
