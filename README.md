@@ -9,27 +9,29 @@ light, MQTT → Supabase, baseline ML.
 **Phase 2 (planned):** water temperature (DS18B20), pH (DFRobot SEN0161-V2),
 soil moisture — the data model and feature pipeline already have slots for them.
 
-## Status — live (updated 2026-09-07)
+## Status — live (updated 2026-09-16)
 
-Full pipeline deployed and running 24/7:
+Full pipeline deployed and running 24/7, now across **multiple boards**:
 
-`ESP32` → `HiveMQ Cloud` → `Render worker (aquaponics-ingest)` → `Supabase`
-→ `NiceGUI dashboard` + `GitHub Actions forecast job`
+`ESP32 (×N)` → `HiveMQ Cloud` → `Render worker (aquaponics-ingest)` → `Supabase`
+→ `NiceGUI dashboard ("AIoT智慧物聯系統")` + `GitHub Actions forecast job` + `LINE push`
 
-- **Dashboard:** https://aquaponics-dashboard-bja1.onrender.com (NiceGUI on Render, Starter plan — always-on, no cold start). Sections: live values, **AI 預測** (latest forecast per metric + a "predicted vs actual" table with rolling hit-rate / MAE), history charts (10-min bins, per-metric colours), anomalies, editable alert thresholds.
-- Firmware publishes one telemetry packet per minute; NTP clock on the OLED.
-  OLED pet skin (water-drop / fish / cat / panda) is picked in the portal or
-  changed remotely from the dashboard via a retained MQTT `.../cmd`.
+- **Dashboard:** https://aquaponics-dashboard-bja1.onrender.com (NiceGUI on Render, Starter plan — always-on, no cold start). Sections: **裝置總覽** (multi-board summary, click a card to switch), live values (red when out of band), **AI 預測** (forecast + predicted-vs-actual hit-rate/MAE, temp/humidity/both filter), history charts (10-min bins, per-metric colours, dashed 上限/下限 threshold lines), 近期異常 (defaults to today, date + metric filters), editable alert thresholds.
+- **Multi-board:** one firmware image; each board gets a unique `裝置 ID` set in the captive portal (NVS), no per-board build.
+- **LINE push:** a threshold breach broadcasts to the project's LINE Official Account within ~1 min (Messaging API, not the discontinued LINE Notify — see `docs/architecture.md` §7 for setup).
+- Firmware publishes one telemetry packet per minute; NTP clock + selectable
+  pixel-pet skin (water-drop / fish / cat / panda) on the OLED, with its own
+  hot/cold expression thresholds — both settable from the dashboard via
+  retained MQTT `.../cmd`.
 - Wi-Fi / MQTT credentials are provisioned at runtime via the WiFiManager
   captive portal (`AquaGuardian-Setup`), not baked into the firmware. An
   optional 2nd (backup) Wi-Fi SSID/password can also be set in the same
   portal; the firmware fails over to it via WiFiMulti if the primary AP drops.
 - Supabase `pg_cron`: hourly rollup, 30-day raw retention, per-minute
-  threshold alerting.
+  threshold alerting (dedupes to ≤1 row/device/metric/hour).
 - **AI:** `.github/workflows/forecast.yml` runs `analysis/baseline.py` every
-  30 min (repo secrets `SUPABASE_URL` / `SUPABASE_SERVICE_KEY`) → EWMA+drift
-  30-min forecast + gated rolling-z anomaly, written to
-  `aqua_forecasts` / `aqua_anomalies`.
+  30 min for every registered device → EWMA+drift 30-min forecast + gated
+  rolling-z anomaly, written to `aqua_forecasts` / `aqua_anomalies`.
 
 ## Stack
 

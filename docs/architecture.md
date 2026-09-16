@@ -269,3 +269,41 @@ informational, not real threshold breaches.
   immediate). `aqua_anomalies.notified_at` (`sql/05_notify.sql`) is both the
   "already pushed" flag and, combined with the existing hourly dedupe,
   the notification rate limit.
+* **2026-09-16** — Two LINE bugs fixed same day: (1) turning the feature on
+  broadcast the entire historical backlog at once (every pre-existing
+  `notified_at is null` row) — one-time backfill in `sql/05_notify.sql`
+  marks old rows notified before the column is used. (2) A Render redeploy
+  briefly running two worker instances let both claim-and-push the same
+  row — `notify_pending_threshold_alerts()` now does one atomic
+  `UPDATE ... WHERE notified_at IS NULL` (PostgREST returns the claimed
+  rows) instead of select-then-update, so a row can only ever be claimed
+  once. Also: the push text showed raw UTC (`_fmt_taipei()` now converts)
+  and duplicated the band info as English `note` text — redesigned to
+  labelled fields with a separate 判讀 (verdict) line, and
+  `aqua_anomalies.min_val`/`max_val` (`sql/06_anomaly_bounds.sql`,
+  populated by `aqua_check_thresholds()`) replaced parsing bounds out of
+  `note`.
+* **2026-09-16** — Dashboard/LINE rebrand to **AIoT智慧物聯系統** (matches
+  the LINE Official Account name) — page title, header bar, push header.
+* **2026-09-16** — Mobile-session additions merged to main: `baseline.py`
+  processes every device in `aqua_devices` (not a hardcoded ID) and dedupes
+  anomaly inserts against what's already stored so a 30-min cron doesn't
+  re-write the same z-score point on every run; dashboard 近期異常 gained a
+  日期 dropdown (options = dates actually present) — defaulted to **今天**
+  instead of 全部 so it opens un-scrolled.
+* **2026-09-16** — Chart: overlay the 警戒範圍 bounds as dashed ECharts
+  `markLine`s. Two follow-on bugs from this: `yAxis scale:true` only sizes
+  to the *series* data, so a bound far from the current reading (e.g.
+  humidity running 67-72 against a 40-60 band) fell outside the visible
+  range — now compute explicit `min`/`max` from data union bounds (+8% pad)
+  whenever a markLine is present. And the line labels were clipped at the
+  right edge (`grid.right` too small + default label position past the
+  line's end) — moved to `insideEndTop` and widened the margin.
+* **2026-09-16** — X-axis tick labels: index-based `interval:'auto'`
+  thinning drifted off clean clock times (11:40, 12:40, ... since the 24h
+  window rarely starts on a boundary). Switched to a client-side JS
+  `axisLabel` formatter — NiceGUI evaluates any option key prefixed `:` as
+  JavaScript (`convertDynamicProperties` in `dynamic_properties.js`,
+  confirmed in the installed package, also how `EChart.from_pyecharts`
+  handles `JsCode`) — that blanks any tick not exactly on a 3-hour
+  boundary. First deliberate use of that mechanism in this codebase.
