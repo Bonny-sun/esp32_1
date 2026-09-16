@@ -574,7 +574,12 @@ def main_page() -> None:
                     "symbol": "none",
                     "silent": True,
                     "lineStyle": {"color": "#dc2626", "type": "dashed", "width": 1},
-                    "label": {"formatter": "{b} {c}", "color": "#dc2626", "fontSize": 10},
+                    "label": {
+                        "formatter": "{b} {c}",
+                        "color": "#dc2626",
+                        "fontSize": 10,
+                        "position": "insideEndTop",
+                    },
                     "data": mark_lines,
                 }
             else:
@@ -582,7 +587,7 @@ def main_page() -> None:
 
             ui.echart(
                 {
-                    "grid": {"left": 45, "right": 15, "top": 10, "bottom": 50},
+                    "grid": {"left": 45, "right": 40, "top": 10, "bottom": 50},
                     "xAxis": {
                         "type": "category",
                         "data": labels,
