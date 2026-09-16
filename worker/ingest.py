@@ -34,7 +34,7 @@ import json
 import os
 import ssl
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import paho.mqtt.client as mqtt
 import requests
@@ -69,10 +69,26 @@ METRIC_LABEL = {
     "ph": "pH",
     "soil_moisture": "土壤濕度",
 }
+METRIC_UNIT = {
+    "temperature": "°C",
+    "humidity": "%RH",
+    "water_temp": "°C",
+    "ph": "",
+    "soil_moisture": "%",
+}
 
 
 def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _fmt_taipei(ts) -> str:
+    """DB timestamps are UTC; render Asia/Taipei (+8, no DST) for a human."""
+    try:
+        dt = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+        return (dt.astimezone(timezone.utc) + timedelta(hours=8)).strftime("%Y-%m-%d %H:%M")
+    except Exception:
+        return str(ts)
 
 
 def push_line(text: str) -> None:
@@ -121,9 +137,24 @@ def notify_pending_threshold_alerts(device_id: str) -> None:
         return
     for r in rows:
         label = METRIC_LABEL.get(r["metric"], r["metric"])
+        unit = METRIC_UNIT.get(r["metric"], "")
+        value, lo, hi = r.get("value"), r.get("min_val"), r.get("max_val")
+
+        value_str = f"{value} {unit}".strip() if value is not None else "—"
+        if lo is not None and hi is not None:
+            if value is not None and value < lo:
+                value_str += f"（低於下限，正常 {lo}–{hi}）"
+            elif value is not None and value > hi:
+                value_str += f"（高於上限，正常 {lo}–{hi}）"
+            else:
+                value_str += f"（正常 {lo}–{hi}）"
+
         push_line(
-            f"⚠️ 魚菜共生警戒\n裝置：{device_id}\n項目：{label}\n"
-            f"數值：{r.get('value')}\n時間：{r.get('ts')}\n{r.get('note') or ''}"
+            "⚠️ 魚菜共生警戒\n"
+            f"裝置：{device_id}\n"
+            f"項目：{label}\n"
+            f"數值：{value_str}\n"
+            f"時間：{_fmt_taipei(r.get('ts'))}"
         )
 
 

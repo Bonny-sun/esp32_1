@@ -1,7 +1,10 @@
 -- ===========================================================================
 --  02_thresholds.sql  — alert thresholds + cloud-side threshold checking
 --  Incremental migration. Run in the Supabase SQL editor AFTER schema.sql
---  (which is already applied). Re-runnable.
+--  (which is already applied). Re-runnable — safe to re-run after edits
+--  like this one (as of 2026-09-16, aqua_check_thresholds() also stamps
+--  min_val/max_val onto the anomaly row; run 06_anomaly_bounds.sql first
+--  so those columns exist).
 -- ===========================================================================
 
 create table if not exists public.aqua_thresholds (
@@ -63,9 +66,10 @@ begin
         and method = 'threshold'
         and created_at > now() - interval '1 hour'
     ) then
-      insert into public.aqua_anomalies (device_id, ts, metric, value, score, method, note)
+      insert into public.aqua_anomalies (device_id, ts, metric, value, score, method, note, min_val, max_val)
       values (r.device_id, r.ts, r.metric, r.val, null, 'threshold',
-              format('%s %s out of band [%s, %s]', r.metric, r.val, r.min_val, r.max_val));
+              format('%s %s out of band [%s, %s]', r.metric, r.val, r.min_val, r.max_val),
+              r.min_val, r.max_val);
     end if;
   end loop;
 end $fn$;
