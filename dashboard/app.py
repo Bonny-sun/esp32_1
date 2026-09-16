@@ -289,7 +289,7 @@ def publish_pet_state(site_id: str, device_id: str, skin: str, hot: float, cold:
 
 
 # ---------------------------------------------------------------- 介面
-@ui.page("/", title="💧 魚菜共生監控")
+@ui.page("/", title="💧 AIoT智慧物聯系統")
 def main_page() -> None:
     ui.colors(primary="#0284c7", secondary="#0891b2", accent="#22c55e", positive="#22c55e")
 
@@ -737,7 +737,7 @@ def main_page() -> None:
 
     # ---------------------------------------------------------------- 排版
     with ui.header().classes("items-center justify-between bg-sky-600 text-white px-4 py-2"):
-        ui.label("💧 魚菜共生監控").classes("text-lg font-semibold")
+        ui.label("💧 AIoT智慧物聯系統").classes("text-lg font-semibold")
         ui.button(icon="refresh", on_click=on_refresh_click).props("flat round color=white")
 
     with ui.column().classes("w-full max-w-3xl mx-auto p-4 gap-5"):
