@@ -21,6 +21,12 @@ Env vars (Render dashboard -> Environment):
   MQTT_TOPIC           default 'aquaponics/+/+/telemetry'
   SUPABASE_URL          https://<ref>.supabase.co
   SUPABASE_SERVICE_KEY  service_role key (bypasses RLS)
+  LINE_CHANNEL_TOKEN     optional — LINE Messaging API channel access token.
+                         Unset = LINE push disabled, everything else unchanged.
+                         (LINE Notify was shut down 2025-03-31; this is the
+                         Messaging API "broadcast" call, which pushes to every
+                         friend of your LINE Official Account — fine for a
+                         personal setup, see docs/architecture.md.)
 """
 from __future__ import annotations
 
@@ -31,6 +37,7 @@ import sys
 from datetime import datetime, timezone
 
 import paho.mqtt.client as mqtt
+import requests
 from supabase import create_client
 
 try:
@@ -46,16 +53,81 @@ MQTT_USER = os.environ["MQTT_USER"]
 MQTT_PASS = os.environ["MQTT_PASS"]
 MQTT_TOPIC = os.environ.get("MQTT_TOPIC", "aquaponics/+/+/telemetry")
 
+LINE_CHANNEL_TOKEN = os.environ.get("LINE_CHANNEL_TOKEN", "")
+LINE_BROADCAST_URL = "https://api.line.me/v2/bot/message/broadcast"
+
 sb = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_KEY"])
 
 # Metrics that have a dedicated column. Anything else in metrics{}/net{}
 # lands in the `extra` jsonb so the firmware can add fields without a
 # schema change.
 KNOWN_METRICS = {"temperature", "humidity", "water_temp", "ph", "soil_moisture"}
+METRIC_LABEL = {
+    "temperature": "氣溫",
+    "humidity": "濕度",
+    "water_temp": "水溫",
+    "ph": "pH",
+    "soil_moisture": "土壤濕度",
+}
 
 
 def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def push_line(text: str) -> None:
+    """Broadcast a LINE message to every friend of the Official Account.
+    No-op (silently) if LINE_CHANNEL_TOKEN isn't set."""
+    if not LINE_CHANNEL_TOKEN:
+        return
+    try:
+        resp = requests.post(
+            LINE_BROADCAST_URL,
+            headers={
+                "Authorization": f"Bearer {LINE_CHANNEL_TOKEN}",
+                "Content-Type": "application/json",
+            },
+            json={"messages": [{"type": "text", "text": text[:4900]}]},
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            print("[line] pushed", flush=True)
+        else:
+            print(f"[line] push failed {resp.status_code}: {resp.text[:200]}", flush=True)
+    except Exception as exc:              # never let a LINE hiccup break ingest
+        print(f"[line] push error: {exc}", flush=True)
+
+
+def notify_pending_threshold_alerts(device_id: str) -> None:
+    """aqua_check_thresholds() (pg_cron, runs every minute) already writes
+    one aqua_anomalies row per device/metric/hour when a value is out of its
+    aqua_thresholds band. Here we just look for rows not yet pushed to LINE,
+    push them, and mark them — called once per telemetry message, so
+    delivery lags the actual breach by at most ~1 min."""
+    if not LINE_CHANNEL_TOKEN:
+        return
+    try:
+        rows = (
+            sb.table("aqua_anomalies").select("*")
+            .eq("device_id", device_id).eq("method", "threshold")
+            .is_("notified_at", "null")
+            .execute().data
+        )
+    except Exception as exc:
+        print(f"[line] lookup failed: {exc}", flush=True)
+        return
+    for r in rows:
+        label = METRIC_LABEL.get(r["metric"], r["metric"])
+        push_line(
+            f"⚠️ 魚菜共生警戒\n裝置：{device_id}\n項目：{label}\n"
+            f"數值：{r.get('value')}\n時間：{r.get('ts')}\n{r.get('note') or ''}"
+        )
+        try:
+            sb.table("aqua_anomalies").update({"notified_at": _utcnow_iso()}).eq(
+                "id", r["id"]
+            ).execute()
+        except Exception as exc:
+            print(f"[line] mark-notified failed for id={r.get('id')}: {exc}", flush=True)
 
 
 def handle_payload(topic: str, raw: bytes) -> None:
@@ -108,6 +180,9 @@ def handle_payload(topic: str, raw: bytes) -> None:
         print(f"[ok] {device_id} T={row['temperature']} H={row['humidity']}", flush=True)
     except Exception as exc:              # keep the worker alive on any DB hiccup
         print(f"[error] insert failed for {device_id}: {exc}", flush=True)
+        return
+
+    notify_pending_threshold_alerts(device_id)
 
 
 # ---- MQTT callbacks (paho v2 signatures) ------------------------------

@@ -145,7 +145,46 @@ every 15 min once there is a day or two of data.
 | Supabase free storage cap **500 MB** (~200 MB/device/year raw) | hourly rollup + 30-day raw retention via `pg_cron`; raise publish interval to 30–60 s if needed |
 | Render Background Workers are **paid** | on the purchased plan (`plan: starter`) |
 
-## 7. Decisions log
+## 7. LINE push notifications (optional)
+
+When a threshold breach is detected, the worker pushes a LINE message.
+**LINE Notify was shut down 2025-03-31** — this uses the **Messaging API**
+`broadcast` call instead, which sends to every friend of one LINE Official
+Account. Fine for a single person; if you ever add other friends to the OA
+they'll get the alerts too.
+
+### Setup (one-time)
+
+1. **Create a LINE Official Account** — free, via
+   [manager.line.biz](https://manager.line.biz) → Create account. Any name.
+2. **[LINE Developers Console](https://developers.line.biz/console/)** →
+   your account → **Create a new provider** (if you don't have one) →
+   inside it, **Create a Messaging API channel** and pick the OA from
+   step 1 as its "company/organisation" — this links the two.
+3. Open the new channel → **Messaging API** tab → scroll to
+   **Channel access token** → **Issue** (long-lived token). Copy it.
+4. On your **phone**, open the OA's page (there's a QR code on the
+   Messaging API tab, or search the OA's LINE ID) and **add it as a
+   friend** — broadcast only reaches friends.
+5. Render → `aquaponics-ingest` → **Environment** → add
+   `LINE_CHANNEL_TOKEN` = the token from step 3 → save (redeploys).
+
+That's it — no webhook, no stored user ID. To disable, delete/blank the
+env var; every code path treats a missing token as "feature off".
+
+### How it fires
+
+`aqua_check_thresholds()` (pg_cron, unchanged) still writes at most one
+`aqua_anomalies` row per device/metric/hour when a value is outside its
+`aqua_thresholds` band. The worker, once per incoming telemetry message
+(~every 60 s per device), looks for rows with `method='threshold'` and
+`notified_at is null`, pushes each via LINE, and stamps `notified_at`. So
+the hourly log dedupe is also the LINE rate limit — no extra throttling
+code, and delivery lags the actual breach by at most ~1 min. Rolling
+z-score anomalies (`method='rolling_zscore'`) do **not** push — those are
+informational, not real threshold breaches.
+
+## 8. Decisions log
 
 * **2026-09-03** — Board confirmed ESP32-WROOM-32 (not WROVER) → RGB stays on
   GPIO16/17/18. Power jumper → 3.3V.
@@ -221,3 +260,12 @@ every 15 min once there is a day or two of data.
   `{"pet":…,"pet_hot":…,"pet_cold":…}` on `.../cmd`, echoed back in telemetry.
   `sql/04_pet_temp.sql` adds `aqua_devices.pet_hot` / `pet_cold`. Hysteresis
   stays fixed at 1 °C. Independent of the cloud `aqua_thresholds` alerting.
+* **2026-09-16** — LINE push on threshold breach. Chose the Messaging API
+  `broadcast` call (not per-user push) to avoid needing a webhook receiver
+  for the user ID — appropriate since it's one person's OA. Put the trigger
+  in the **worker**, not a `pg_net`/Vault call inside `aqua_check_thresholds()`
+  — keeps the whole feature in Python/Render logs the user already knows,
+  at the cost of ~1 min extra latency (next telemetry message, not
+  immediate). `aqua_anomalies.notified_at` (`sql/05_notify.sql`) is both the
+  "already pushed" flag and, combined with the existing hourly dedupe,
+  the notification rate limit.

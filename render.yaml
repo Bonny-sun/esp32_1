@@ -32,6 +32,10 @@ services:
         sync: false
       - key: SUPABASE_SERVICE_KEY
         sync: false
+      # optional: LINE push on threshold breach. Leave unset in the Render
+      # dashboard to keep the feature disabled.
+      - key: LINE_CHANNEL_TOKEN
+        sync: false
 
   # ---- NiceGUI dashboard (paid instance; always-on, no cold start) ----
   - type: web
