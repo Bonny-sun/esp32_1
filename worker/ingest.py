@@ -101,20 +101,23 @@ def push_line(text: str) -> None:
 def notify_pending_threshold_alerts(device_id: str) -> None:
     """aqua_check_thresholds() (pg_cron, runs every minute) already writes
     one aqua_anomalies row per device/metric/hour when a value is out of its
-    aqua_thresholds band. Here we just look for rows not yet pushed to LINE,
-    push them, and mark them — called once per telemetry message, so
-    delivery lags the actual breach by at most ~1 min."""
+    aqua_thresholds band. Here we CLAIM the not-yet-pushed ones with a
+    single atomic UPDATE ... WHERE notified_at IS NULL (PostgREST returns
+    the rows it just updated) and push those — never a separate
+    select-then-update, so two overlapping calls (e.g. a Render redeploy
+    briefly running two instances) can't both grab and push the same row."""
     if not LINE_CHANNEL_TOKEN:
         return
     try:
         rows = (
-            sb.table("aqua_anomalies").select("*")
+            sb.table("aqua_anomalies")
+            .update({"notified_at": _utcnow_iso()})
             .eq("device_id", device_id).eq("method", "threshold")
             .is_("notified_at", "null")
             .execute().data
         )
     except Exception as exc:
-        print(f"[line] lookup failed: {exc}", flush=True)
+        print(f"[line] claim failed: {exc}", flush=True)
         return
     for r in rows:
         label = METRIC_LABEL.get(r["metric"], r["metric"])
@@ -122,12 +125,6 @@ def notify_pending_threshold_alerts(device_id: str) -> None:
             f"⚠️ 魚菜共生警戒\n裝置：{device_id}\n項目：{label}\n"
             f"數值：{r.get('value')}\n時間：{r.get('ts')}\n{r.get('note') or ''}"
         )
-        try:
-            sb.table("aqua_anomalies").update({"notified_at": _utcnow_iso()}).eq(
-                "id", r["id"]
-            ).execute()
-        except Exception as exc:
-            print(f"[line] mark-notified failed for id={r.get('id')}: {exc}", flush=True)
 
 
 def handle_payload(topic: str, raw: bytes) -> None:

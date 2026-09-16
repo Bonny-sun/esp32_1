@@ -11,3 +11,10 @@
 
 alter table public.aqua_anomalies
     add column if not exists notified_at timestamptz;
+
+-- One-time backfill: silence the pre-existing backlog so turning the
+-- feature on doesn't broadcast every old breach at once. Safe to re-run —
+-- only touches rows still NULL, so it's a no-op once the backlog is clear.
+update public.aqua_anomalies
+set notified_at = now()
+where method = 'threshold' and notified_at is null;
