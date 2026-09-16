@@ -141,20 +141,23 @@ def notify_pending_threshold_alerts(device_id: str) -> None:
         value, lo, hi = r.get("value"), r.get("min_val"), r.get("max_val")
 
         value_str = f"{value} {unit}".strip() if value is not None else "—"
+
+        verdict = ""
         if lo is not None and hi is not None:
             if value is not None and value < lo:
-                value_str += f"（低於下限，正常 {lo}–{hi}）"
+                verdict = f"低於下限，正常 {lo}–{hi}"
             elif value is not None and value > hi:
-                value_str += f"（高於上限，正常 {lo}–{hi}）"
+                verdict = f"高於上限，正常 {lo}–{hi}"
             else:
-                value_str += f"（正常 {lo}–{hi}）"
+                verdict = f"正常 {lo}–{hi}"
 
         push_line(
             "⚠️ 魚菜共生警戒\n"
+            f"時間：{_fmt_taipei(r.get('ts'))}\n"
             f"裝置：{device_id}\n"
             f"項目：{label}\n"
             f"數值：{value_str}\n"
-            f"時間：{_fmt_taipei(r.get('ts'))}"
+            f"判讀：{verdict}"
         )
 
 
