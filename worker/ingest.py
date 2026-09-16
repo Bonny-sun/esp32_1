@@ -152,7 +152,7 @@ def notify_pending_threshold_alerts(device_id: str) -> None:
                 verdict = f"正常 {lo}–{hi}"
 
         push_line(
-            "⚠️ 魚菜共生警戒\n"
+            "⚠️ AIoT系統警戒\n"
             f"時間：{_fmt_taipei(r.get('ts'))}\n"
             f"裝置：{device_id}\n"
             f"項目：{label}\n"
