@@ -559,7 +559,17 @@ def main_page() -> None:
                 "areaStyle": {"opacity": 0.15},
                 "color": COLOR.get(m, "#0284c7"),
             }
+            # ECharts' yAxis scale:true only looks at the SERIES data, not
+            # markLine values — a threshold far from the current reading
+            # (e.g. humidity sitting at 67-72 with a 40-60 band) fell outside
+            # the auto-scaled range and the line was silently clipped. When
+            # there's a threshold line, size the axis to cover data + bounds
+            # explicitly instead of leaving it to auto-scale.
             if mark_lines:
+                nums = [v for v in vals if v is not None] + [ml["yAxis"] for ml in mark_lines]
+                y_lo, y_hi = min(nums), max(nums)
+                pad = (y_hi - y_lo) * 0.08 or 1
+                y_axis = {"type": "value", "min": round(y_lo - pad, 2), "max": round(y_hi + pad, 2)}
                 series_def["markLine"] = {
                     "symbol": "none",
                     "silent": True,
@@ -567,6 +577,8 @@ def main_page() -> None:
                     "label": {"formatter": "{b} {c}", "color": "#dc2626", "fontSize": 10},
                     "data": mark_lines,
                 }
+            else:
+                y_axis = {"type": "value", "scale": True}
 
             ui.echart(
                 {
@@ -576,7 +588,7 @@ def main_page() -> None:
                         "data": labels,
                         "axisLabel": {"interval": "auto", "hideOverlap": True, "rotate": 30, "fontSize": 10},
                     },
-                    "yAxis": {"type": "value", "scale": True},
+                    "yAxis": y_axis,
                     "tooltip": {"trigger": "axis"},
                     "series": [series_def],
                 }
