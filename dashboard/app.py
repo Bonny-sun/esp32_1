@@ -591,7 +591,26 @@ def main_page() -> None:
                     "xAxis": {
                         "type": "category",
                         "data": labels,
-                        "axisLabel": {"interval": "auto", "hideOverlap": True, "rotate": 30, "fontSize": 10},
+                        "axisLabel": {
+                            # Only label ticks that land exactly on a 3-hour
+                            # boundary (12:00, 15:00, ...), not "every Nth
+                            # point" — index-based thinning drifts off clean
+                            # hours since the 24h window rarely starts on one.
+                            # NiceGUI evaluates a ":"-prefixed value as JS
+                            # (see dynamic_properties.js / echart.js).
+                            "interval": 0,
+                            "hideOverlap": True,
+                            "rotate": 30,
+                            "fontSize": 10,
+                            ":formatter": (
+                                "function(value){"
+                                "var m=/(\\d{2}):(\\d{2})$/.exec(value);"
+                                "if(!m)return '';"
+                                "var h=parseInt(m[1],10),mi=parseInt(m[2],10);"
+                                "return (mi===0&&h%3===0)?value:'';"
+                                "}"
+                            ),
+                        },
                     },
                     "yAxis": y_axis,
                     "tooltip": {"trigger": "axis"},
