@@ -521,6 +521,7 @@ def main_page() -> None:
             f"資料範圍 {hist.index[0]:%m-%d %H:%M} ～ {hist.index[-1]:%m-%d %H:%M}"
             f"（{len(hist)} 點）"
         ).classes("text-xs text-gray-400")
+        thr = load_thresholds(state["device_id"])
         for m in ("temperature", "humidity"):
             col = m if m in hist.columns else (f"{m}_avg" if f"{m}_avg" in hist.columns else None)
             if not col:
@@ -537,6 +538,36 @@ def main_page() -> None:
             # and thin + rotate labels itself instead.
             labels = [t.strftime("%m-%d %H:%M") for t in series.index]
             vals = [None if pd.isna(v) else round(float(v), 2) for v in series.values]
+
+            # Overlay the 警戒範圍 upper/lower bounds as dashed reference
+            # lines, so a breach is visible on the chart, not just in the
+            # anomalies list. Only for an enabled threshold with a set bound.
+            t = thr.get(m) or {}
+            mark_lines = []
+            if t.get("enabled"):
+                if t.get("min_val") is not None:
+                    mark_lines.append({"name": "下限", "yAxis": float(t["min_val"])})
+                if t.get("max_val") is not None:
+                    mark_lines.append({"name": "上限", "yAxis": float(t["max_val"])})
+
+            series_def = {
+                "type": "line",
+                "data": vals,
+                "connectNulls": False,
+                "smooth": True,
+                "showSymbol": False,
+                "areaStyle": {"opacity": 0.15},
+                "color": COLOR.get(m, "#0284c7"),
+            }
+            if mark_lines:
+                series_def["markLine"] = {
+                    "symbol": "none",
+                    "silent": True,
+                    "lineStyle": {"color": "#dc2626", "type": "dashed", "width": 1},
+                    "label": {"formatter": "{b} {c}", "color": "#dc2626", "fontSize": 10},
+                    "data": mark_lines,
+                }
+
             ui.echart(
                 {
                     "grid": {"left": 45, "right": 15, "top": 10, "bottom": 50},
@@ -547,17 +578,7 @@ def main_page() -> None:
                     },
                     "yAxis": {"type": "value", "scale": True},
                     "tooltip": {"trigger": "axis"},
-                    "series": [
-                        {
-                            "type": "line",
-                            "data": vals,
-                            "connectNulls": False,
-                            "smooth": True,
-                            "showSymbol": False,
-                            "areaStyle": {"opacity": 0.15},
-                            "color": COLOR.get(m, "#0284c7"),
-                        }
-                    ],
+                    "series": [series_def],
                 }
             ).classes("w-full h-48")
 
