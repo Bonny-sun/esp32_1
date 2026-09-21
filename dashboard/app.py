@@ -19,8 +19,8 @@ import ssl
 import time
 from datetime import datetime, timedelta, timezone
 
-import pandas as pd
 import paho.mqtt.client as mqtt
+import pandas as pd
 from nicegui import run, ui
 from supabase import create_client
 
@@ -54,7 +54,8 @@ COLOR = {
     "ph": "#7c3aed",            # violet
     "soil_moisture": "#a16207", # amber-brown
 }
-PET_LABEL = {"drop": "水滴", "fish": "魚", "cat": "貓", "panda": "熊貓"}   # value must match firmware's petSkinFromString()
+# keys must match firmware's petSkinFromString()
+PET_LABEL = {"drop": "水滴", "fish": "魚", "cat": "貓", "panda": "熊貓"}
 RANGE_HOURS = {"24 小時": 24, "7 天": 168, "30 天": 720}
 METRIC_FILTERS = {  # 「近期異常」「上次預測 vs 實際」的項目篩選
     "溫度": ["temperature"],

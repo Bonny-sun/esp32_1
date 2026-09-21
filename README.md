@@ -1,5 +1,7 @@
 # AIoT智慧物聯系統 — Smart Aquaponics Edge Monitor & AI Predictor
 
+[![CI](https://github.com/Bonny-sun/esp32_1/actions/workflows/ci.yml/badge.svg)](https://github.com/Bonny-sun/esp32_1/actions/workflows/ci.yml)
+
 An end-to-end IoT project: ESP32 edge nodes with a pixel-pet OLED UI stream
 environment telemetry over MQTT/TLS to a cloud pipeline that stores the
 time-series, forecasts the next 30 minutes, detects anomalies, shows everything
@@ -135,6 +137,8 @@ dashboard/app.py           NiceGUI dashboard (Render web service)
 analysis/baseline.py       pull history -> forecast + anomalies -> write back
 render.yaml                Render Blueprint (worker + dashboard)
 .github/workflows/         scheduled forecast job
+tests/                     pytest suite (worker + analysis, Supabase faked)
+requirements-dev.txt       deps for lint + tests
 tools/png_to_xbm.py        convert a 48x48 1-bit PNG to a C XBM array (optional)
 docs/architecture.md       design doc + decisions log
 ```
@@ -167,6 +171,15 @@ pip install -r requirements.txt
 python baseline.py           # after ~1 day of data
 ```
 
+### Tests
+```bash
+pip install -r requirements-dev.txt
+ruff check .
+pytest -q
+```
+CI (`.github/workflows/ci.yml`) runs the same two commands plus a
+`pio run` firmware build on every push and pull request.
+
 ## Firmware behaviour
 
 | Condition | Pet | RGB LED |
@@ -184,7 +197,7 @@ python baseline.py           # after ~1 day of data
 - [x] NiceGUI dashboard on Render reading Supabase
 - [x] Remote pet / threshold config via `aquaponics/<site>/<device>/cmd`
 - [x] LINE alerts, multi-board support
-- [ ] Tests + CI
+- [x] Tests + CI (pytest, ruff, firmware build on every push)
 - [ ] Per-device MQTT credentials with topic-level ACLs
 - [ ] Device-offline alert, OTA firmware updates
 - [ ] Prophet / LightGBM model once multivariate history exists

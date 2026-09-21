@@ -1,0 +1,4 @@
+-r analysis/requirements.txt
+-r worker/requirements.txt
+pytest>=8
+ruff>=0.6
