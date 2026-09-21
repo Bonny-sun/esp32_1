@@ -307,3 +307,26 @@ informational, not real threshold breaches.
   confirmed in the installed package, also how `EChart.from_pyecharts`
   handles `JsCode`) — that blanks any tick not exactly on a 3-hour
   boundary. First deliberate use of that mechanism in this codebase.
+* **2026-09-21** — README rewritten for portfolio use (Mermaid architecture,
+  dashboard screenshot + hardware photo in `docs/images/`, wiring table).
+  Added `tests/` (pytest, Supabase faked via `tests/conftest.py`), `ruff`
+  config in `pyproject.toml`, and `.github/workflows/ci.yml` (ruff + pytest +
+  `pio run`, CI badge in README). CI green on `6c40ddc`.
+  **OPEN BUG (handoff — not yet fixed):** `analysis/baseline.py`
+  `detect_univariate` (rolling z-score, method `rolling_zscore`, shown as
+  「統計偏離」) can never fire. The 12-point rolling window includes the point
+  being scored, so |z| <= (n-1)/sqrt(n) = 3.18 < `Z_THRESH` 3.5 (verified
+  empirically, max 3.175 even for huge spikes). Threshold alerts / LINE push
+  are unaffected (they use `aqua_check_thresholds()` in SQL, method
+  `threshold`). Pinned by a strict `xfail` in
+  `tests/test_baseline.py::test_zscore_flags_a_real_spike`.
+  **Planned fix:** in `build_features`/`detect_univariate`, score each point
+  against the PREVIOUS window (`roll_mean`/`roll_std` computed on
+  `out[c].shift(1)`), keep the `Z_MIN_ABS_DEV` / `Z_STD_FLOOR` gates, remove
+  the xfail. **Before pushing:** dry-run against real data (read-only, no
+  `save()`) and count how many new `rolling_zscore` anomalies appear per day
+  for each device; if it is more than a handful per day, raise the gates
+  first. Once fixed the dashboard 近期異常 will start showing 「統計偏離」rows
+  (expected, intended) — the next `forecast` workflow run (every 30 min)
+  writes them. Note `test_zscore_ignores_tiny_wiggle_on_flat_signal` currently
+  passes only because nothing fires; re-check it after the fix.

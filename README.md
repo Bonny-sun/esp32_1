@@ -17,6 +17,8 @@ on a live dashboard and pushes LINE alerts when a reading leaves its safe band.
 [Demo video](https://youtu.be/xxxxxxxx)
 -->
 
+<img src="docs/images/hardware.jpg" width="320" alt="Hardware: ESP32 + OLED pixel pet">
+
 **Phase 1 (this repo):** air temperature + humidity, OLED pet UI, RGB status
 light, MQTT → Supabase, baseline ML, dashboard, LINE alerts, multi-board.
 **Phase 2 (planned):** water temperature (DS18B20), pH (DFRobot SEN0161-V2),
