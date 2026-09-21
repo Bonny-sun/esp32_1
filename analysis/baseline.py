@@ -104,6 +104,15 @@ def build_features(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
     for c in cols:
         out[f"{c}_roll_mean"] = out[c].rolling(ROLL_WIN, min_periods=3).mean()
         out[f"{c}_roll_std"] = out[c].rolling(ROLL_WIN, min_periods=3).std()
+        # _prev variants: rolling stats over the PREVIOUS window only (the
+        # point at t is not part of the window used to score it). Used by
+        # detect_univariate — scoring a point against a window that includes
+        # itself caps |z| at (n-1)/sqrt(n), which a real spike can never
+        # clear. forecast() intentionally keeps the inclusive _roll_std
+        # above as its "current volatility" estimate; that's a different use.
+        shifted = out[c].shift(1)
+        out[f"{c}_roll_mean_prev"] = shifted.rolling(ROLL_WIN, min_periods=3).mean()
+        out[f"{c}_roll_std_prev"] = shifted.rolling(ROLL_WIN, min_periods=3).std()
         out[f"{c}_lag1"] = out[c].shift(1)
     return out
 
@@ -132,8 +141,8 @@ def forecast(device_id: str, out: pd.DataFrame, col: str, steps: int) -> dict:
 def detect_univariate(device_id: str, out: pd.DataFrame, cols: list[str]) -> list[dict]:
     hits: list[dict] = []
     for c in cols:
-        dev = out[c] - out[f"{c}_roll_mean"]
-        std = out[f"{c}_roll_std"].clip(lower=Z_STD_FLOOR.get(c, 1e-9))
+        dev = out[c] - out[f"{c}_roll_mean_prev"]
+        std = out[f"{c}_roll_std_prev"].clip(lower=Z_STD_FLOOR.get(c, 1e-9))
         z = dev / std
         mask = (z.abs() > Z_THRESH) & (dev.abs() > Z_MIN_ABS_DEV.get(c, 0.0))
         for t in out.index[mask]:
