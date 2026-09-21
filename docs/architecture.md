@@ -330,3 +330,17 @@ informational, not real threshold breaches.
   (expected, intended) — the next `forecast` workflow run (every 30 min)
   writes them. Note `test_zscore_ignores_tiny_wiggle_on_flat_signal` currently
   passes only because nothing fires; re-check it after the fix.
+* **2026-09-21 (later) — FIXED.** `build_features` now also computes
+  `{col}_roll_mean_prev`/`{col}_roll_std_prev` — rolling stats over
+  `out[c].shift(1)`, i.e. the window ending right before the point being
+  scored, never including it. `detect_univariate` scores against these
+  `_prev` columns instead of the inclusive `_roll_mean`/`_roll_std` (which
+  `forecast()` still uses unchanged — that's a "current volatility" estimate,
+  not a self-comparison, so it was never part of the bug). Removed the
+  `xfail` from `test_zscore_flags_a_real_spike`; it and
+  `test_zscore_ignores_tiny_wiggle_on_flat_signal` both pass for real now
+  (32/32 tests, ruff clean). **Still open:** the real-data dry-run called for
+  above — nobody has run `baseline.py` against production Supabase since
+  this fix to confirm daily `rolling_zscore` volume is sane before the next
+  scheduled `forecast` workflow run writes rows with it live. Do that first;
+  raise `Z_THRESH`/the `Z_MIN_ABS_DEV` gates if it's noisy.

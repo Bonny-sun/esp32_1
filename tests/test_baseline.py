@@ -48,8 +48,10 @@ def test_load_history_handles_mixed_iso_precision(monkeypatch, fake_client):
 # ---- build_features ----------------------------------------------------
 def test_build_features_adds_rolling_and_lag_columns():
     out = baseline.build_features(_frame(range(30)), ["temperature"])
-    assert {"temperature", "temperature_roll_mean", "temperature_roll_std",
-            "temperature_lag1"} <= set(out.columns)
+    assert {
+        "temperature", "temperature_roll_mean", "temperature_roll_std",
+        "temperature_roll_mean_prev", "temperature_roll_std_prev", "temperature_lag1",
+    } <= set(out.columns)
     assert out["temperature_lag1"].iloc[5] == out["temperature"].iloc[4]
 
 
@@ -78,12 +80,6 @@ def test_forecast_flat_series_stays_flat():
 
 
 # ---- z-score gating ----------------------------------------------------
-@pytest.mark.xfail(
-    strict=True,
-    reason="KNOWN BUG: the rolling window includes the point being scored, so |z| is capped at "
-    "(n-1)/sqrt(n) = 3.18 for n=12 and can never exceed Z_THRESH=3.5 -> rolling_zscore never fires. "
-    "Fix: score each point against the previous window (shift(1)). Remove this xfail once fixed.",
-)
 def test_zscore_flags_a_real_spike():
     vals = [25.0 + 0.1 * (i % 2) for i in range(40)]
     vals[30] = 32.0
