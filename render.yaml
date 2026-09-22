@@ -55,6 +55,8 @@ services:
         sync: false
       - key: SUPABASE_SERVICE_KEY
         sync: false
+      - key: DASH_USERNAME
+        sync: false
       - key: DASH_PASSWORD
         sync: false
       # same HiveMQ creds as aquaponics-ingest — lets the dashboard publish
