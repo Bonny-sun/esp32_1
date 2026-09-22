@@ -52,7 +52,14 @@ FEATURE_COLS = ["temperature", "humidity"]
 # FEATURE_COLS = ["temperature", "humidity", "water_temp", "ph", "soil_moisture"]
 
 RESAMPLE = "5min"
-LOOKBACK_H = 72
+LOOKBACK_H = 72        # ewma+drift / anomaly detection: recent-trend window
+GBM_LOOKBACK_H = 24 * 14  # gbm: separate, longer window — the whole point of
+                          # its hour-of-day feature is learning a diurnal
+                          # pattern, which needs many examples per hour-of-day
+                          # to be more than noise. 3 days gives ~3 per hour;
+                          # 14 gives ~14. Decoupled from LOOKBACK_H on purpose:
+                          # widening THAT would blur ewma+drift's "recent
+                          # slope" signal, which is a different job.
 ROLL_WIN = 12          # 12 * 5 min = 1 h rolling window
 Z_THRESH = 3.5
 HORIZON_STEPS = 6      # 6 * 5 min = 30 min ahead
@@ -308,8 +315,15 @@ def process_device(device_id: str) -> None:
     print(f"[{device_id}] {len(feats)} resampled rows | features = {FEATURE_COLS}")
 
     forecasts = [forecast(device_id, feats, c, HORIZON_STEPS) for c in FEATURE_COLS]
+
+    # GBM gets its own, longer-history feature frame (see GBM_LOOKBACK_H) —
+    # df is non-empty at this point, and GBM_LOOKBACK_H > LOOKBACK_H with the
+    # same "now" upper bound, so gbm_df is guaranteed non-empty too.
+    gbm_df = load_history(device_id, GBM_LOOKBACK_H)
+    gbm_feats = build_features(gbm_df, FEATURE_COLS)
+    print(f"[{device_id}] {len(gbm_feats)} resampled rows for gbm training ({GBM_LOOKBACK_H}h lookback)")
     for c in FEATURE_COLS:
-        gbm = forecast_gbm(device_id, feats, c, HORIZON_STEPS)
+        gbm = forecast_gbm(device_id, gbm_feats, c, HORIZON_STEPS)
         if gbm is not None:
             forecasts.append(gbm)
     for f in forecasts:

@@ -262,3 +262,36 @@ def test_process_device_saves_both_forecast_models(monkeypatch, fake_client):
         "temperature": {"ewma+drift", "gbm"},
         "humidity": {"ewma+drift", "gbm"},
     }
+
+
+def test_process_device_fetches_a_longer_window_for_gbm(monkeypatch, fake_client):
+    """GBM_LOOKBACK_H is supposed to be its own, longer history fetch — not
+    just the LOOKBACK_H window reused. Locks in that process_device asks
+    load_history for both windows, with GBM's strictly longer, rather than
+    silently training on the same short window as ewma+drift."""
+    pytest.importorskip("sklearn")
+    idx = pd.date_range("2026-09-16", periods=3 * 24 * 12, freq="5min", tz="UTC")
+    telemetry_newest_first = [
+        {"ts": t.isoformat(), "temperature": 25.0, "humidity": 60.0} for t in idx
+    ][::-1]
+
+    def handler(q):
+        if q.table == "aqua_telemetry":
+            (lo, hi), _ = q.op("range")
+            return telemetry_newest_first[lo:hi + 1]
+        return []
+
+    monkeypatch.setattr(baseline, "sb", fake_client(handler))
+
+    calls: list[int] = []
+    real_load_history = baseline.load_history
+
+    def spy(device_id, hours):
+        calls.append(hours)
+        return real_load_history(device_id, hours)
+
+    monkeypatch.setattr(baseline, "load_history", spy)
+    baseline.process_device("dev")
+
+    assert calls == [baseline.LOOKBACK_H, baseline.GBM_LOOKBACK_H]
+    assert baseline.GBM_LOOKBACK_H > baseline.LOOKBACK_H

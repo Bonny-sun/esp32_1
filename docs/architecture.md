@@ -375,3 +375,26 @@ informational, not real threshold breaches.
   yet). `test_process_device_saves_both_forecast_models` confirms both
   `ewma+drift` and `gbm` rows actually get written per run. 37/37 tests
   pass, ruff clean.
+* **2026-09-22 (later) — GBM gets its own longer training window.**
+  `forecast_gbm` was training on the same `LOOKBACK_H=72h` (3 day) window
+  as `ewma+drift`/anomaly detection — barely 2-3 examples per hour-of-day,
+  not enough for `hour_sin`/`hour_cos` to mean anything over noise. Added
+  `GBM_LOOKBACK_H = 24*14` (2 weeks, ~14 examples/hour-of-day) as a
+  separate constant; `process_device` now calls `load_history` a second
+  time with it and builds a second features frame just for `forecast_gbm`.
+  Deliberately NOT raising `LOOKBACK_H` itself — that window is also
+  `ewma+drift`'s "recent slope" signal and z-score's baseline, both of
+  which want recent-only, not 2 weeks. `df.empty` is checked before either
+  fetch, so a device with less than 72h of data still bails out early
+  without wasting a second query.
+  Decided against first collecting a few days of baseline metrics on the
+  72h-window `gbm` before switching: the only comparison that matters for
+  this project is ewma+drift vs gbm, not gbm-3day vs gbm-14day, and the
+  72h version has no evaluated predictions yet anyway — switching now
+  means the first real numbers already reflect the version being kept.
+  Test: `test_process_device_fetches_a_longer_window_for_gbm` locks in that
+  `process_device` asks `load_history` for both windows, with GBM's
+  strictly longer. 38/38 tests pass, ruff clean.
+  **Still open:** same as before — give this 1-2+ days spanning a real
+  day/night transition before reading anything into the hit-rate/MAE
+  numbers.
