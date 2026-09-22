@@ -687,7 +687,7 @@ def main_page() -> None:
         with ui.row().classes("items-center gap-1"):
             ui.button(icon="settings", on_click=lambda: ui.navigate.to("/admin")).props(
                 "flat round color=white"
-            ).tooltip("管理後台")
+            ).tooltip("AIoT智慧物聯管理後台")
             ui.button(icon="refresh", on_click=on_refresh_click).props("flat round color=white")
 
     with ui.column().classes("w-full max-w-3xl mx-auto p-4 gap-5"):
@@ -723,7 +723,7 @@ def main_page() -> None:
 
 
 # ---------------------------------------------------------------- 管理後台
-@ui.page("/admin", title="⚙️ 管理後台")
+@ui.page("/admin", title="⚙️ AIoT智慧物聯管理後台")
 def admin_page() -> None:
     """所有需要設定/會改變裝置或雲端行為的功能都集中在這裡:推播設定、
     顯示設定(OLED 虛擬寵物)、警戒設定。主頁維持純檢視,不放任何設定。"""
@@ -847,7 +847,7 @@ def admin_page() -> None:
         if ADMIN_AUTH_REQUIRED and not state["unlocked"]:
             with ui.card().classes("w-full max-w-sm mx-auto mt-10 items-center gap-3 p-6"):
                 ui.icon("lock", size="xl").classes("text-gray-400")
-                ui.label("管理後台登入").classes("text-lg font-semibold")
+                ui.label("AIoT智慧物聯管理後台登入").classes("text-lg font-semibold")
                 user = ui.input("帳號").classes("w-full")
                 pw = ui.input("密碼", password=True).classes("w-full")
 
@@ -882,7 +882,7 @@ def admin_page() -> None:
         alert_section()
 
     with ui.header().classes("items-center justify-between bg-slate-700 text-white px-4 py-2"):
-        ui.label("⚙️ 管理後台").classes("text-lg font-semibold")
+        ui.label("⚙️ AIoT智慧物聯管理後台").classes("text-lg font-semibold")
         ui.button("← 返回主頁", on_click=lambda: ui.navigate.to("/")).props("flat color=white")
 
     with ui.column().classes("w-full max-w-3xl mx-auto p-4 gap-5"):
