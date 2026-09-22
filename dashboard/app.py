@@ -329,7 +329,6 @@ def main_page() -> None:
         # rows yet (see the date_options guard in anomalies_section)
         "anom_date": (datetime.now(timezone.utc) + timedelta(hours=8)).strftime("%Y-%m-%d"),
         "fc_metric": "溫溼度",
-        "unlocked": not DASH_PASSWORD,
     }
 
     def device() -> dict:
@@ -339,7 +338,6 @@ def main_page() -> None:
 
     def select_device(did: str) -> None:
         state["device_id"] = did
-        state["unlocked"] = not DASH_PASSWORD
         if dev_select is not None:
             dev_select.value = did
         refresh_all()
@@ -351,20 +349,6 @@ def main_page() -> None:
         return (lo is not None and float(v) < float(lo)) or (hi is not None and float(v) > float(hi))
 
     # ------------------------------------------------------ 各區塊(可局部刷新)
-    @ui.refreshable
-    def notify_toggle_section():
-        paused = load_line_paused()
-
-        def on_toggle(e):
-            set_line_paused(e.value)
-            ui.notify("已暫停 LINE 推播" if e.value else "已恢復 LINE 推播", type="warning" if e.value else "positive")
-            notify_toggle_section.refresh()
-
-        with ui.row().classes("items-center gap-2"):
-            ui.switch("暫停 LINE 推播", value=paused, on_change=on_toggle)
-            if paused:
-                ui.icon("notifications_off").classes("text-amber-500")
-
     @ui.refreshable
     def overview_section():
         devs = load_devices()
@@ -419,48 +403,6 @@ def main_page() -> None:
             ui.label(f"{label} · 最後上線 {seen.tz_convert(TZ):%Y-%m-%d %H:%M:%S}").classes(
                 "text-sm text-gray-500"
             )
-
-    @ui.refreshable
-    def pet_section():
-        dev = device()
-        current_pet = dev.get("pet_skin") or "drop"
-        hot0 = float(dev.get("pet_hot") if dev.get("pet_hot") is not None else 28)
-        cold0 = float(dev.get("pet_cold") if dev.get("pet_cold") is not None else 18)
-        with ui.card().classes("w-full"):
-            ui.label("虛擬寵物").classes("font-semibold")
-            with ui.row().classes("items-center gap-3 flex-wrap"):
-                sel = ui.select(dict(PET_LABEL), value=current_pet, label="外觀").classes("w-32")
-                n_hot = ui.number(label="流汗門檻 °C", value=hot0, step=0.5).classes("w-32")
-                n_cold = ui.number(label="發抖門檻 °C", value=cold0, step=0.5).classes("w-32")
-            if not MQTT_HOST:
-                ui.label("尚未設定 MQTT_HOST 等環境變數，無法從這裡送出變更。").classes(
-                    "text-xs text-gray-400"
-                )
-            else:
-                site_id = dev.get("site_id", "default")
-                device_id = state["device_id"]
-
-                async def apply(sel=sel, n_hot=n_hot, n_cold=n_cold, site_id=site_id, device_id=device_id):
-                    hot, cold = float(n_hot.value), float(n_cold.value)
-                    if cold >= hot:
-                        ui.notify("發抖門檻要小於流汗門檻。", type="negative")
-                        return
-                    try:
-                        await run.io_bound(
-                            publish_pet_state, site_id, device_id, sel.value, hot, cold
-                        )
-                        ui.notify(
-                            f"已送出：{PET_LABEL[sel.value]}、>{hot}°C 流汗、<{cold}°C 發抖。"
-                            "裝置上線後立即套用。",
-                            type="positive",
-                        )
-                    except Exception as exc:
-                        ui.notify(f"送出失敗：{exc}", type="negative")
-
-                ui.button("套用", on_click=apply).classes("mt-1")
-                ui.label("OLED 寵物表情的門檻(與雲端「警戒範圍」告警無關)。").classes(
-                    "text-xs text-gray-400"
-                )
 
     @ui.refreshable
     def metrics_section():
@@ -705,23 +647,160 @@ def main_page() -> None:
         ]
         ui.table(columns=columns, rows=show.to_dict("records"), row_key="ts").classes("w-full")
 
+    # ------------------------------------------------------------- 事件處理
+    def refresh_all():
+        overview_section.refresh()
+        status_section.refresh()
+        metrics_section.refresh()
+        forecast_section.refresh()
+        history_section.refresh()
+        anomalies_section.refresh()
+
+    def on_device_change(e):
+        state["device_id"] = e.value
+        refresh_all()
+
+    def on_range_change(e):
+        state["range_label"] = e.value
+        history_section.refresh()
+
+    def on_anom_metric_change(e):
+        state["anom_metric"] = e.value
+        anomalies_section.refresh()
+
+    def on_fc_metric_change(e):
+        state["fc_metric"] = e.value
+        forecast_section.refresh()
+
+    def on_refresh_click():
+        clear_cache()
+        refresh_all()
+
+    # ---------------------------------------------------------------- 排版
+    with ui.header().classes("items-center justify-between bg-sky-600 text-white px-4 py-2"):
+        ui.label("💧 AIoT智慧物聯系統").classes("text-lg font-semibold")
+        with ui.row().classes("items-center gap-1"):
+            ui.button(icon="settings", on_click=lambda: ui.navigate.to("/admin")).props(
+                "flat round color=white"
+            ).tooltip("管理後台")
+            ui.button(icon="refresh", on_click=on_refresh_click).props("flat round color=white")
+
+    with ui.column().classes("w-full max-w-3xl mx-auto p-4 gap-5"):
+        overview_section()
+        dev_select = ui.select(
+            ids, value=state["device_id"], label="詳細檢視裝置", on_change=on_device_change
+        ).classes("w-56")
+        status_section()
+        metrics_section()
+
+        ui.label("AI 預測").classes("text-lg font-semibold mt-2")
+        ui.toggle(
+            list(METRIC_FILTERS.keys()),
+            value=state["fc_metric"],
+            on_change=on_fc_metric_change,
+        )
+        forecast_section()
+
+        ui.label("歷史趨勢").classes("text-lg font-semibold mt-2")
+        ui.toggle(list(RANGE_HOURS.keys()), value=state["range_label"], on_change=on_range_change)
+        history_section()
+
+        ui.label("近期異常").classes("text-lg font-semibold mt-2")
+        ui.toggle(
+            list(METRIC_FILTERS.keys()),
+            value=state["anom_metric"],
+            on_change=on_anom_metric_change,
+        )
+        anomalies_section()
+
+    # 每 60 秒自動重新整理一次(對齊裝置上傳週期)。
+    ui.timer(60.0, on_refresh_click)
+
+
+# ---------------------------------------------------------------- 管理後台
+@ui.page("/admin", title="⚙️ 管理後台")
+def admin_page() -> None:
+    """所有需要設定/會改變裝置或雲端行為的功能都集中在這裡:推播設定、
+    顯示設定(OLED 虛擬寵物)、警戒設定。主頁維持純檢視,不放任何設定。"""
+    ui.colors(primary="#0284c7", secondary="#0891b2", accent="#22c55e", positive="#22c55e")
+
+    devices = load_devices()
+    if not devices:
+        with ui.column().classes("w-full items-center gap-3 p-16"):
+            ui.icon("warning", size="xl").classes("text-amber-500")
+            ui.label("尚未註冊任何裝置。").classes("text-lg text-gray-500")
+        return
+
+    ids = [d["device_id"] for d in devices]
+    state = {"device_id": ids[0], "unlocked": not DASH_PASSWORD}
+
+    def device() -> dict:
+        return next(d for d in devices if d["device_id"] == state["device_id"])
+
     @ui.refreshable
-    def thresholds_section():
-        if DASH_PASSWORD and not state["unlocked"]:
-            with ui.row().classes("items-center gap-3"):
-                pw = ui.input("編輯密碼", password=True).classes("w-48")
+    def notify_section():
+        paused = load_line_paused()
 
-                def try_unlock(pw=pw):
-                    if pw.value == DASH_PASSWORD:
-                        state["unlocked"] = True
-                        thresholds_section.refresh()
-                    else:
-                        ui.notify("密碼錯誤", type="negative")
+        def on_toggle(e):
+            set_line_paused(e.value)
+            ui.notify(
+                "已暫停 LINE 推播" if e.value else "已恢復 LINE 推播",
+                type="warning" if e.value else "positive",
+            )
+            notify_section.refresh()
 
-                ui.button("解鎖", on_click=try_unlock)
-            ui.label("唯讀模式,輸入密碼才能編輯。").classes("text-xs text-gray-400")
-            return
+        with ui.row().classes("items-center gap-2"):
+            ui.switch("暫停 LINE 推播", value=paused, on_change=on_toggle)
+            if paused:
+                ui.icon("notifications_off").classes("text-amber-500")
+        ui.label("關閉後,異常仍會被記錄(不會累積成之後的洗版),只是不會真的推播到 LINE。").classes(
+            "text-xs text-gray-400"
+        )
 
+    @ui.refreshable
+    def display_section():
+        dev = device()
+        current_pet = dev.get("pet_skin") or "drop"
+        hot0 = float(dev.get("pet_hot") if dev.get("pet_hot") is not None else 28)
+        cold0 = float(dev.get("pet_cold") if dev.get("pet_cold") is not None else 18)
+        with ui.card().classes("w-full"):
+            ui.label("OLED 虛擬寵物").classes("font-semibold")
+            with ui.row().classes("items-center gap-3 flex-wrap"):
+                sel = ui.select(dict(PET_LABEL), value=current_pet, label="外觀").classes("w-32")
+                n_hot = ui.number(label="流汗門檻 °C", value=hot0, step=0.5).classes("w-32")
+                n_cold = ui.number(label="發抖門檻 °C", value=cold0, step=0.5).classes("w-32")
+            if not MQTT_HOST:
+                ui.label("尚未設定 MQTT_HOST 等環境變數，無法從這裡送出變更。").classes(
+                    "text-xs text-gray-400"
+                )
+            else:
+                site_id = dev.get("site_id", "default")
+                device_id = state["device_id"]
+
+                async def apply(sel=sel, n_hot=n_hot, n_cold=n_cold, site_id=site_id, device_id=device_id):
+                    hot, cold = float(n_hot.value), float(n_cold.value)
+                    if cold >= hot:
+                        ui.notify("發抖門檻要小於流汗門檻。", type="negative")
+                        return
+                    try:
+                        await run.io_bound(
+                            publish_pet_state, site_id, device_id, sel.value, hot, cold
+                        )
+                        ui.notify(
+                            f"已送出：{PET_LABEL[sel.value]}、>{hot}°C 流汗、<{cold}°C 發抖。"
+                            "裝置上線後立即套用。",
+                            type="positive",
+                        )
+                    except Exception as exc:
+                        ui.notify(f"送出失敗：{exc}", type="negative")
+
+                ui.button("套用", on_click=apply).classes("mt-1")
+                ui.label("OLED 寵物表情的門檻(與雲端「警戒設定」告警無關)。").classes(
+                    "text-xs text-gray-400"
+                )
+
+    @ui.refreshable
+    def alert_section():
         th = load_thresholds(state["device_id"])
         edits: dict = {}
         # ui.grid (CSS grid, minmax(0,1fr) columns) shrinks correctly on narrow
@@ -745,89 +824,56 @@ def main_page() -> None:
                 payload = {m: (mn.value, mx.value, en.value) for m, (mn, mx, en) in edits.items()}
                 save_thresholds(state["device_id"], payload)
                 ui.notify("已儲存。", type="positive")
-                clear_cache()
-                thresholds_section.refresh()
-                metrics_section.refresh()
+                alert_section.refresh()
 
             ui.button("儲存", on_click=do_save)
         ui.label(
             "雲端每分鐘檢查一次(aqua_check_thresholds),持續超標最多每小時記一筆,"
-            "顯示在「近期異常」的「超出範圍」。"
+            "顯示在主頁「近期異常」的「超出範圍」。"
         ).classes("text-xs text-gray-400 mt-1")
-
-    # ------------------------------------------------------------- 事件處理
-    def refresh_all():
-        notify_toggle_section.refresh()
-        overview_section.refresh()
-        status_section.refresh()
-        pet_section.refresh()
-        metrics_section.refresh()
-        forecast_section.refresh()
-        history_section.refresh()
-        anomalies_section.refresh()
-        thresholds_section.refresh()
 
     def on_device_change(e):
         state["device_id"] = e.value
-        state["unlocked"] = not DASH_PASSWORD
-        refresh_all()
+        display_section.refresh()
+        alert_section.refresh()
 
-    def on_range_change(e):
-        state["range_label"] = e.value
-        history_section.refresh()
+    @ui.refreshable
+    def gate_or_content():
+        if DASH_PASSWORD and not state["unlocked"]:
+            with ui.card().classes("w-full max-w-sm mx-auto mt-10 items-center gap-3 p-6"):
+                ui.icon("lock", size="xl").classes("text-gray-400")
+                ui.label("管理後台需要密碼").classes("text-lg font-semibold")
+                pw = ui.input("密碼", password=True).classes("w-full")
 
-    def on_anom_metric_change(e):
-        state["anom_metric"] = e.value
-        anomalies_section.refresh()
+                def try_unlock(pw=pw):
+                    if pw.value == DASH_PASSWORD:
+                        state["unlocked"] = True
+                        gate_or_content.refresh()
+                    else:
+                        ui.notify("密碼錯誤", type="negative")
 
-    def on_fc_metric_change(e):
-        state["fc_metric"] = e.value
-        forecast_section.refresh()
+                ui.button("解鎖", on_click=try_unlock).classes("w-full").props("color=primary")
+            return
 
-    def on_refresh_click():
-        clear_cache()
-        refresh_all()
+        ui.select(
+            ids, value=state["device_id"], label="設定裝置", on_change=on_device_change
+        ).classes("w-56")
 
-    # ---------------------------------------------------------------- 排版
-    with ui.header().classes("items-center justify-between bg-sky-600 text-white px-4 py-2"):
-        ui.label("💧 AIoT智慧物聯系統").classes("text-lg font-semibold")
-        ui.button(icon="refresh", on_click=on_refresh_click).props("flat round color=white")
+        ui.label("推播設定").classes("text-lg font-semibold mt-2")
+        notify_section()
+
+        ui.label("顯示設定").classes("text-lg font-semibold mt-2")
+        display_section()
+
+        ui.label("警戒設定").classes("text-lg font-semibold mt-2")
+        alert_section()
+
+    with ui.header().classes("items-center justify-between bg-slate-700 text-white px-4 py-2"):
+        ui.label("⚙️ 管理後台").classes("text-lg font-semibold")
+        ui.button("← 返回主頁", on_click=lambda: ui.navigate.to("/")).props("flat color=white")
 
     with ui.column().classes("w-full max-w-3xl mx-auto p-4 gap-5"):
-        notify_toggle_section()
-        overview_section()
-        dev_select = ui.select(
-            ids, value=state["device_id"], label="詳細檢視裝置", on_change=on_device_change
-        ).classes("w-56")
-        status_section()
-        pet_section()
-        metrics_section()
-
-        ui.label("AI 預測").classes("text-lg font-semibold mt-2")
-        ui.toggle(
-            list(METRIC_FILTERS.keys()),
-            value=state["fc_metric"],
-            on_change=on_fc_metric_change,
-        )
-        forecast_section()
-
-        ui.label("歷史趨勢").classes("text-lg font-semibold mt-2")
-        ui.toggle(list(RANGE_HOURS.keys()), value=state["range_label"], on_change=on_range_change)
-        history_section()
-
-        ui.label("近期異常").classes("text-lg font-semibold mt-2")
-        ui.toggle(
-            list(METRIC_FILTERS.keys()),
-            value=state["anom_metric"],
-            on_change=on_anom_metric_change,
-        )
-        anomalies_section()
-
-        ui.label("警戒範圍").classes("text-lg font-semibold mt-2")
-        thresholds_section()
-
-    # 每 60 秒自動重新整理一次(對齊裝置上傳週期)。
-    ui.timer(60.0, on_refresh_click)
+        gate_or_content()
 
 
 if __name__ in {"__main__", "__mp_main__"}:
