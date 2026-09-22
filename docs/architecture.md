@@ -344,3 +344,34 @@ informational, not real threshold breaches.
   this fix to confirm daily `rolling_zscore` volume is sane before the next
   scheduled `forecast` workflow run writes rows with it live. Do that first;
   raise `Z_THRESH`/the `Z_MIN_ABS_DEV` gates if it's noisy.
+* **2026-09-22 — champion-challenger forecasting.** `ewma+drift` is a local
+  linear extrapolation — structurally unable to anticipate a predictable
+  diurnal swing (e.g. evening cool-down), since it only ever looks at the
+  recent slope. Added `forecast_gbm()`: a `GradientBoostingRegressor`
+  (scikit-learn, already a dependency) retrained from scratch every run on
+  the same 72h window, using the existing lag/rolling `_prev` features plus
+  a new `hour_sin`/`hour_cos` time-of-day feature (a raw hour number looks
+  like a cliff to a tree split; sin/cos makes 23:00 and 00:00 neighbours).
+  Direct multi-step supervised forecasting: each training row's target is
+  `out[col]` shifted back `HORIZON_STEPS`, i.e. a value that — for every row
+  except the very last one — already happened; only the final row's target
+  is unknown, and that's the one row actually predicted. Confidence band
+  comes from a holdout split's residual std, not in-sample error (which
+  would understate it), then the model is refit on all of `train` for the
+  actual point forecast. Returns `None` below `GBM_MIN_TRAIN_ROWS=30` rather
+  than fit noise.
+  `ewma+drift` is untouched and keeps running — both write to
+  `aqua_forecasts` every cycle, distinguished only by the `model` column, so
+  nothing is replaced and a `gbm` bug can't take down the existing forecast.
+  Dashboard's 「上次預測 vs 實際」now groups hit-rate/MAE by (metric, model)
+  instead of metric alone, so the two can be compared head-to-head once
+  enough evaluated pairs accumulate (see the "how long to observe" note:
+  want 1-2+ days, ideally spanning a real day/night transition, before
+  trusting either model's numbers over the other's).
+  Tests: `forecast_gbm` returns `None` on too little data, produces a sane
+  in-range prediction on a synthetic diurnal signal, is deterministic
+  (`random_state=42`), and a training-frame test confirms the row being
+  predicted never appears with a real target (its target doesn't exist
+  yet). `test_process_device_saves_both_forecast_models` confirms both
+  `ewma+drift` and `gbm` rows actually get written per run. 37/37 tests
+  pass, ruff clean.

@@ -27,7 +27,7 @@ from __future__ import annotations
 import os
 from datetime import datetime, timedelta, timezone
 
-import numpy as np  # noqa: F401  (kept: handy in the console / Phase-2 maths)
+import numpy as np
 import pandas as pd
 from supabase import create_client
 
@@ -56,6 +56,7 @@ LOOKBACK_H = 72
 ROLL_WIN = 12          # 12 * 5 min = 1 h rolling window
 Z_THRESH = 3.5
 HORIZON_STEPS = 6      # 6 * 5 min = 30 min ahead
+GBM_MIN_TRAIN_ROWS = 30   # below this, skip the GBM forecast rather than fit noise
 
 # Anti-false-positive gates for the z-score detector. On a near-flat signal
 # the rolling std collapses, so a trivial wiggle scores many sigma. Require
@@ -134,6 +135,81 @@ def forecast(device_id: str, out: pd.DataFrame, col: str, steps: int) -> dict:
         "yhat_lower": round(yhat - 2 * sd, 2),
         "yhat_upper": round(yhat + 2 * sd, 2),
         "model": "ewma+drift",
+    }
+
+
+def _time_features(index: pd.DatetimeIndex) -> pd.DataFrame:
+    """Hour-of-day as sin/cos so a tree model can learn "23:00 and 00:00
+    are neighbours" — a raw hour number looks like a cliff to a tree split.
+    Works in whatever tz `index` already is (UTC here); the model only
+    needs a consistent label per time-of-day, not a human-readable one."""
+    hour_frac = index.hour + index.minute / 60.0
+    angle = 2 * np.pi * hour_frac / 24.0
+    return pd.DataFrame({"hour_sin": np.sin(angle), "hour_cos": np.cos(angle)}, index=index)
+
+
+# ---- 3a'. challenger forecast: gradient boosting on lag features -----
+def forecast_gbm(device_id: str, out: pd.DataFrame, col: str, steps: int) -> dict | None:
+    """Direct multi-step forecast: a small gradient-boosted tree trained on
+    lag/rolling features (already in `out`) plus time-of-day, so it can
+    pick up on a diurnal cycle that ewma+drift's local linear extrapolation
+    structurally can't (it only ever looks at the recent slope). Retrained
+    from scratch every run on the same window everything else uses — no
+    persisted model file, so the pipeline stays stateless like the rest of
+    this script.
+
+    Leakage: each training row's target is out[col] shifted BACK by `steps`
+    — i.e. a value `steps` rows in that row's future. For every row except
+    the last `steps`, that future value already happened and is a real
+    historical observation; only the final row's target is genuinely
+    unknown, and that's the one row this function actually predicts.
+    Returns None (skip this run/metric) if there isn't enough history to
+    fit on, so a quiet device never gets a forecast built on noise.
+    """
+    from sklearn.ensemble import GradientBoostingRegressor
+
+    feat_cols = [col, f"{col}_roll_mean_prev", f"{col}_roll_std_prev", f"{col}_lag1"]
+    feats = pd.concat([out[feat_cols], _time_features(out.index)], axis=1)
+    target = out[col].shift(-steps)
+
+    train = feats.iloc[:-steps].join(target.iloc[:-steps].rename("y")).dropna()
+    if len(train) < GBM_MIN_TRAIN_ROWS:
+        return None
+
+    x_now = feats.iloc[[-1]]
+    if x_now.isna().any(axis=1).iloc[0]:
+        return None
+
+    def _fit(rows: pd.DataFrame) -> GradientBoostingRegressor:
+        m = GradientBoostingRegressor(n_estimators=100, max_depth=3, learning_rate=0.1, random_state=42)
+        m.fit(rows.drop(columns="y"), rows["y"])
+        return m
+
+    # Holdout-based residual std for the confidence band — fitting and
+    # scoring on the SAME rows (as the point forecast below has to, there
+    # being no other data) would understate the true error. Refit on all
+    # of `train` afterwards for the actual point prediction, once the
+    # holdout has told us how wrong to expect the model to be.
+    n_holdout = max(5, int(len(train) * 0.2))
+    fit_rows, holdout_rows = train.iloc[:-n_holdout], train.iloc[-n_holdout:]
+    if len(fit_rows) < GBM_MIN_TRAIN_ROWS:
+        return None
+    probe = _fit(fit_rows)
+    resid = holdout_rows["y"] - probe.predict(holdout_rows.drop(columns="y"))
+    sd = float(resid.std()) if len(holdout_rows) > 1 and pd.notna(resid.std()) else 0.0
+
+    model = _fit(train)
+    yhat = float(model.predict(x_now)[0])
+    target_ts = out.index[-1] + pd.Timedelta(RESAMPLE) * steps
+    return {
+        "device_id": device_id,
+        "metric": col,
+        "horizon_min": steps * 5,
+        "ts_target": target_ts.isoformat(),
+        "yhat": round(yhat, 2),
+        "yhat_lower": round(yhat - 2 * sd, 2),
+        "yhat_upper": round(yhat + 2 * sd, 2),
+        "model": "gbm",
     }
 
 
@@ -232,9 +308,13 @@ def process_device(device_id: str) -> None:
     print(f"[{device_id}] {len(feats)} resampled rows | features = {FEATURE_COLS}")
 
     forecasts = [forecast(device_id, feats, c, HORIZON_STEPS) for c in FEATURE_COLS]
+    for c in FEATURE_COLS:
+        gbm = forecast_gbm(device_id, feats, c, HORIZON_STEPS)
+        if gbm is not None:
+            forecasts.append(gbm)
     for f in forecasts:
         print(
-            f"  [{device_id}] forecast {f['metric']:14s} +{f['horizon_min']:>3}min -> "
+            f"  [{device_id}] forecast {f['model']:10s} {f['metric']:14s} +{f['horizon_min']:>3}min -> "
             f"{f['yhat']:>7}  [{f['yhat_lower']}, {f['yhat_upper']}]"
         )
     save("aqua_forecasts", forecasts)
