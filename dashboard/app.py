@@ -457,11 +457,16 @@ def main_page() -> None:
             .tail(1)
             .sort_values(["metric", "model"])
         )
-        with ui.row().classes("w-full gap-4 flex-wrap"):
+        # Fixed 2-column grid, not a flex-wrap row — flex-wrap breaks the
+        # (metric, model) pairing as soon as a row happens to fit 3 cards
+        # instead of 2 (odd number wraps, "氣溫 · gbm" lands alone on the
+        # next line, no longer next to "氣溫 · ewma+drift"). Grid always
+        # keeps every metric's two model-cards on the same row.
+        with ui.grid(columns=2).classes("w-full gap-4"):
             for _, r in latest.iterrows():
                 m = r["metric"]
                 u = UNIT.get(m, "")
-                with ui.card().classes("min-w-[180px] flex-1 items-start"):
+                with ui.card().classes("items-start"):
                     ui.label(
                         f"{LABEL.get(m, m)} · {r['model']} · {int(r['horizon_min'])} 分鐘後"
                     ).classes("text-sm text-gray-500")
