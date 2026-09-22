@@ -597,12 +597,13 @@ def main_page() -> None:
                         "type": "category",
                         "data": labels,
                         "axisLabel": {
-                            # Only label ticks that land exactly on a 3-hour
-                            # boundary (12:00, 15:00, ...), not "every Nth
-                            # point" — index-based thinning drifts off clean
-                            # hours since the 24h window rarely starts on one.
-                            # NiceGUI evaluates a ":"-prefixed value as JS
-                            # (see dynamic_properties.js / echart.js).
+                            # Only label ticks that land exactly on a 6-hour
+                            # boundary (00:00, 06:00, 12:00, 18:00), not
+                            # "every Nth point" — index-based thinning drifts
+                            # off clean hours since the 24h window rarely
+                            # starts on one. NiceGUI evaluates a ":"-prefixed
+                            # value as JS (see dynamic_properties.js /
+                            # echart.js).
                             "interval": 0,
                             "hideOverlap": True,
                             "rotate": 30,
@@ -612,7 +613,7 @@ def main_page() -> None:
                                 "var m=/(\\d{2}):(\\d{2})$/.exec(value);"
                                 "if(!m)return '';"
                                 "var h=parseInt(m[1],10),mi=parseInt(m[2],10);"
-                                "return (mi===0&&h%3===0)?value:'';"
+                                "return (mi===0&&h%6===0)?value:'';"
                                 "}"
                             ),
                         },
