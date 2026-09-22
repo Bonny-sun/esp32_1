@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 import ssl
 import time
 from datetime import datetime, timedelta, timezone
@@ -67,7 +68,11 @@ MQTT_HOST = os.environ.get("MQTT_HOST", "")
 MQTT_PORT = int(os.environ.get("MQTT_PORT", "8883"))
 MQTT_USER = os.environ.get("MQTT_USER", "")
 MQTT_PASS = os.environ.get("MQTT_PASS", "")
+DASH_USERNAME = os.environ.get("DASH_USERNAME", "")
 DASH_PASSWORD = os.environ.get("DASH_PASSWORD", "")
+# Gate the admin page if EITHER is set, so a half-configured pair (one set,
+# one forgotten) still locks the page instead of silently leaving it open.
+ADMIN_AUTH_REQUIRED = bool(DASH_USERNAME or DASH_PASSWORD)
 
 _sb = None
 
@@ -732,7 +737,7 @@ def admin_page() -> None:
         return
 
     ids = [d["device_id"] for d in devices]
-    state = {"device_id": ids[0], "unlocked": not DASH_PASSWORD}
+    state = {"device_id": ids[0], "unlocked": not ADMIN_AUTH_REQUIRED}
 
     def device() -> dict:
         return next(d for d in devices if d["device_id"] == state["device_id"])
@@ -839,20 +844,28 @@ def admin_page() -> None:
 
     @ui.refreshable
     def gate_or_content():
-        if DASH_PASSWORD and not state["unlocked"]:
+        if ADMIN_AUTH_REQUIRED and not state["unlocked"]:
             with ui.card().classes("w-full max-w-sm mx-auto mt-10 items-center gap-3 p-6"):
                 ui.icon("lock", size="xl").classes("text-gray-400")
-                ui.label("管理後台需要密碼").classes("text-lg font-semibold")
+                ui.label("管理後台登入").classes("text-lg font-semibold")
+                user = ui.input("帳號").classes("w-full")
                 pw = ui.input("密碼", password=True).classes("w-full")
 
-                def try_unlock(pw=pw):
-                    if pw.value == DASH_PASSWORD:
+                def try_unlock(user=user, pw=pw):
+                    # compare_digest avoids leaking a match via response-time
+                    # differences; not that it matters much for a personal
+                    # dashboard, but it's free.
+                    ok = secrets.compare_digest(
+                        user.value, DASH_USERNAME
+                    ) and secrets.compare_digest(pw.value, DASH_PASSWORD)
+                    if ok:
                         state["unlocked"] = True
                         gate_or_content.refresh()
                     else:
-                        ui.notify("密碼錯誤", type="negative")
+                        ui.notify("帳號或密碼錯誤", type="negative")
 
-                ui.button("解鎖", on_click=try_unlock).classes("w-full").props("color=primary")
+                pw.on("keydown.enter", try_unlock)
+                ui.button("登入", on_click=try_unlock).classes("w-full").props("color=primary")
             return
 
         ui.select(
