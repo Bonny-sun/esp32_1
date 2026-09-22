@@ -19,6 +19,7 @@ import secrets
 import ssl
 import time
 from datetime import datetime, timedelta, timezone
+from urllib.parse import quote
 
 import paho.mqtt.client as mqtt
 import pandas as pd
@@ -685,9 +686,12 @@ def main_page() -> None:
     with ui.header().classes("items-center justify-between bg-sky-600 text-white px-4 py-2"):
         ui.label("💧 AIoT智慧物聯系統").classes("text-lg font-semibold")
         with ui.row().classes("items-center gap-1"):
-            ui.button(icon="settings", on_click=lambda: ui.navigate.to("/admin")).props(
-                "flat round color=white"
-            ).tooltip("AIoT智慧物聯管理後台")
+            ui.button(
+                icon="settings",
+                # carry the currently-viewed device over, so the admin page
+                # doesn't reset back to the first device in the list
+                on_click=lambda: ui.navigate.to(f"/admin?device={quote(state['device_id'])}"),
+            ).props("flat round color=white").tooltip("AIoT智慧物聯管理後台")
             ui.button(icon="refresh", on_click=on_refresh_click).props("flat round color=white")
 
     with ui.column().classes("w-full max-w-3xl mx-auto p-4 gap-5"):
@@ -724,9 +728,14 @@ def main_page() -> None:
 
 # ---------------------------------------------------------------- 管理後台
 @ui.page("/admin", title="⚙️ AIoT智慧物聯管理後台")
-def admin_page() -> None:
+def admin_page(device: str = "") -> None:
     """所有需要設定/會改變裝置或雲端行為的功能都集中在這裡:推播設定、
-    顯示設定(OLED 虛擬寵物)、警戒設定。主頁維持純檢視,不放任何設定。"""
+    顯示設定(OLED 虛擬寵物)、警戒設定。主頁維持純檢視,不放任何設定。
+
+    `device` is an optional ?device=... query param the main page's gear
+    icon carries over, so switching to admin doesn't reset back to the
+    first device in the list — pages are independent NiceGUI sessions with
+    no shared state, so this query param is the only link between them."""
     ui.colors(primary="#0284c7", secondary="#0891b2", accent="#22c55e", positive="#22c55e")
 
     devices = load_devices()
@@ -737,7 +746,7 @@ def admin_page() -> None:
         return
 
     ids = [d["device_id"] for d in devices]
-    state = {"device_id": ids[0], "unlocked": not ADMIN_AUTH_REQUIRED}
+    state = {"device_id": device if device in ids else ids[0], "unlocked": not ADMIN_AUTH_REQUIRED}
 
     def device() -> dict:
         return next(d for d in devices if d["device_id"] == state["device_id"])
