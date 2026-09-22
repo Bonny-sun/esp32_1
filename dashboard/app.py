@@ -541,6 +541,13 @@ def main_page() -> None:
             # desktop-width chart and overlapped into unreadable mush on a
             # phone-width one — let ECharts measure the actual rendered width
             # and thin + rotate labels itself instead.
+            #
+            # The tick spacing itself has to depend on the selected range: 6h
+            # boundaries (00/06/12/18) read fine over a single day, but the
+            # same rule over 7 or 30 days puts a label on every one of those
+            # boundaries across the whole window (28+ for 7 days) and the
+            # axis turns into a solid wall of text. Widen to one tick/day (or
+            # every 3rd day for 30 days) once the window is longer than a day.
             labels = [t.strftime("%m-%d %H:%M") for t in series.index]
             vals = [None if pd.isna(v) else round(float(v), 2) for v in series.values]
 
@@ -590,6 +597,30 @@ def main_page() -> None:
             else:
                 y_axis = {"type": "value", "scale": True}
 
+            if hours <= 24:
+                # Ticks on the 6-hour boundaries (00/06/12/18); full date+time.
+                tick_formatter = (
+                    "function(value){"
+                    "var m=/(\\d{2}):(\\d{2})$/.exec(value);"
+                    "if(!m)return '';"
+                    "var h=parseInt(m[1],10),mi=parseInt(m[2],10);"
+                    "return (mi===0&&h%6===0)?value:'';"
+                    "}"
+                )
+            else:
+                # One tick per day (7-day view) or every 3rd day (30-day
+                # view), always at midnight; show just the date since the
+                # time is always 00:00.
+                day_step = 1 if hours <= 168 else 3
+                tick_formatter = (
+                    "function(value){"
+                    "var m=/^(\\d{2})-(\\d{2}) (\\d{2}):(\\d{2})$/.exec(value);"
+                    "if(!m)return '';"
+                    "var d=parseInt(m[2],10),h=parseInt(m[3],10),mi=parseInt(m[4],10);"
+                    f"return (mi===0&&h===0&&d%{day_step}===0)?value.slice(0,5):'';"
+                    "}"
+                )
+
             ui.echart(
                 {
                     "grid": {"left": 45, "right": 40, "top": 10, "bottom": 50},
@@ -597,25 +628,17 @@ def main_page() -> None:
                         "type": "category",
                         "data": labels,
                         "axisLabel": {
-                            # Only label ticks that land exactly on a 6-hour
-                            # boundary (00:00, 06:00, 12:00, 18:00), not
-                            # "every Nth point" — index-based thinning drifts
-                            # off clean hours since the 24h window rarely
-                            # starts on one. NiceGUI evaluates a ":"-prefixed
-                            # value as JS (see dynamic_properties.js /
-                            # echart.js).
+                            # index-based thinning drifts off clean hours
+                            # since the window rarely starts on one; filter
+                            # by the label's own timestamp instead (see
+                            # tick_formatter above). NiceGUI evaluates a
+                            # ":"-prefixed value as JS (see
+                            # dynamic_properties.js / echart.js).
                             "interval": 0,
                             "hideOverlap": True,
                             "rotate": 30,
                             "fontSize": 10,
-                            ":formatter": (
-                                "function(value){"
-                                "var m=/(\\d{2}):(\\d{2})$/.exec(value);"
-                                "if(!m)return '';"
-                                "var h=parseInt(m[1],10),mi=parseInt(m[2],10);"
-                                "return (mi===0&&h%6===0)?value:'';"
-                                "}"
-                            ),
+                            ":formatter": tick_formatter,
                         },
                     },
                     "yAxis": y_axis,
