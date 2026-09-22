@@ -79,6 +79,63 @@ def test_forecast_flat_series_stays_flat():
     assert f["yhat"] == 25.0
 
 
+# ---- forecast_gbm --------------------------------------------------------
+def _diurnal_frame(days=3, freq="5min", amplitude=5.0, base=25.0, peak_hour=18.0):
+    idx = pd.date_range("2026-09-16", periods=int(days * 24 * 60 / 5), freq=freq, tz="UTC")
+    hours = idx.hour + idx.minute / 60.0
+    vals = base + amplitude * np.sin(2 * np.pi * (hours - (peak_hour - 6)) / 24)
+    return pd.DataFrame({"temperature": vals}, index=idx)
+
+
+def test_forecast_gbm_returns_none_with_too_little_data():
+    pytest.importorskip("sklearn")
+    out = baseline.build_features(_frame(range(10)), ["temperature"])
+    assert baseline.forecast_gbm("dev", out, "temperature", baseline.HORIZON_STEPS) is None
+
+
+def test_forecast_gbm_predicts_a_sane_value_on_a_diurnal_signal():
+    pytest.importorskip("sklearn")
+    out = baseline.build_features(_diurnal_frame(days=3), ["temperature"])
+    f = baseline.forecast_gbm("dev", out, "temperature", baseline.HORIZON_STEPS)
+
+    assert f is not None
+    assert f["model"] == "gbm"
+    assert f["device_id"] == "dev" and f["metric"] == "temperature"
+    assert f["horizon_min"] == 30
+    assert 15.0 <= f["yhat"] <= 35.0               # within the signal's own range, no blow-up
+    assert f["yhat_lower"] <= f["yhat"] <= f["yhat_upper"]
+    assert pd.Timestamp(f["ts_target"]) == out.index[-1] + pd.Timedelta("30min")
+
+
+def test_forecast_gbm_is_deterministic():
+    """Same input twice -> same output. Guards against an unseeded model
+    or any hidden dependence on call order/global state creeping in."""
+    pytest.importorskip("sklearn")
+    out = baseline.build_features(_diurnal_frame(days=3), ["temperature"])
+    f1 = baseline.forecast_gbm("dev", out, "temperature", baseline.HORIZON_STEPS)
+    f2 = baseline.forecast_gbm("dev", out, "temperature", baseline.HORIZON_STEPS)
+    assert f1 == f2
+
+
+def test_forecast_gbm_training_targets_never_reach_into_the_unknown_future():
+    """The row being predicted (out.index[-1]) has no real target yet — its
+    y would be out[col] at a row that doesn't exist. Confirms the training
+    frame excludes exactly the trailing `steps` rows as feature rows (their
+    target is NaN and gets dropped), so the model is never fit on a made-up
+    label for "now"."""
+    pytest.importorskip("sklearn")
+    out = baseline.build_features(_diurnal_frame(days=3), ["temperature"])
+    steps = baseline.HORIZON_STEPS
+
+    feat_cols = ["temperature", "temperature_roll_mean_prev", "temperature_roll_std_prev", "temperature_lag1"]
+    feats = pd.concat([out[feat_cols], baseline._time_features(out.index)], axis=1)
+    target = out["temperature"].shift(-steps)
+    train = feats.iloc[:-steps].join(target.iloc[:-steps].rename("y")).dropna()
+
+    # the "now" row must never appear as a training example
+    assert out.index[-1] not in train.index
+
+
 # ---- z-score gating ----------------------------------------------------
 def test_zscore_flags_a_real_spike():
     vals = [25.0 + 0.1 * (i % 2) for i in range(40)]
@@ -166,3 +223,42 @@ def test_list_device_ids_env_override_skips_db(monkeypatch, fake_client):
     monkeypatch.setattr(baseline, "sb", client)
     assert baseline.list_device_ids() == ["only-one"]
     assert client.queries == []
+
+
+# ---- process_device: champion-challenger integration --------------------
+def test_process_device_saves_both_forecast_models(monkeypatch, fake_client):
+    pytest.importorskip("sklearn")
+    idx = pd.date_range("2026-09-16", periods=3 * 24 * 12, freq="5min", tz="UTC")
+    hours = idx.hour + idx.minute / 60.0
+    temps = 25 + 5 * np.sin(2 * np.pi * (hours - 12) / 24)
+    hums = 60 + 3 * np.sin(2 * np.pi * (hours - 18) / 24)
+    telemetry_newest_first = [
+        {"ts": t.isoformat(), "temperature": float(tv), "humidity": float(hv)}
+        for t, tv, hv in zip(idx, temps, hums, strict=True)
+    ][::-1]
+
+    saved: dict[str, list] = {"aqua_forecasts": [], "aqua_anomalies": []}
+
+    def handler(q):
+        if q.table == "aqua_telemetry":
+            (lo, hi), _ = q.op("range")
+            return telemetry_newest_first[lo:hi + 1]
+        if q.table in saved:
+            if q.has("insert"):
+                rows = q.op("insert")[0][0]
+                saved[q.table].extend(rows)
+                return rows
+            return []                       # dedupe_anomalies' pre-existing-rows lookup
+        return []
+
+    monkeypatch.setattr(baseline, "sb", fake_client(handler))
+
+    baseline.process_device("dev")
+
+    models_by_metric: dict[str, set] = {}
+    for r in saved["aqua_forecasts"]:
+        models_by_metric.setdefault(r["metric"], set()).add(r["model"])
+    assert models_by_metric == {
+        "temperature": {"ewma+drift", "gbm"},
+        "humidity": {"ewma+drift", "gbm"},
+    }

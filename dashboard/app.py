@@ -196,9 +196,13 @@ def load_forecasts(device_id: str) -> pd.DataFrame:
 
 
 @cached(60)
-def load_forecast_eval(device_id: str, limit: int = 24) -> pd.DataFrame:
+def load_forecast_eval(device_id: str, limit: int = 96) -> pd.DataFrame:
     """Match each already-due forecast to the actual reading nearest its
-    target time (within 15 min). Returns a small table for the UI."""
+    target time (within 15 min). Returns a small table for the UI.
+
+    limit=96, not 24: each run now writes 2 models x 2 metrics = 4 rows
+    instead of 2, so the old limit only covered half the time span (and
+    half the per-model sample size) it used to."""
     now_iso = datetime.now(timezone.utc).isoformat()
     fc = (
         sb().table("aqua_forecasts").select("*").eq("device_id", device_id)
@@ -240,6 +244,7 @@ def load_forecast_eval(device_id: str, limit: int = 24) -> pd.DataFrame:
             {
                 "ts_target": r["ts_target"].tz_convert(TZ).strftime("%m-%d %H:%M"),
                 "metric": LABEL.get(metric, metric),
+                "model": r["model"],
                 "yhat": round(yhat, 1),
                 "actual": round(actual, 1),
                 "err": round(abs(yhat - actual), 2),
@@ -443,14 +448,22 @@ def main_page() -> None:
             return
         wanted = METRIC_FILTERS[state["fc_metric"]]
         wanted_labels = [LABEL.get(k, k) for k in wanted]
-        latest = fc[fc["metric"].isin(wanted)].sort_values("created_at").groupby("metric").tail(1)
+        # one card per (metric, model) — champion (ewma+drift) and
+        # challenger (gbm) run side by side, never replacing each other
+        latest = (
+            fc[fc["metric"].isin(wanted)]
+            .sort_values("created_at")
+            .groupby(["metric", "model"])
+            .tail(1)
+            .sort_values(["metric", "model"])
+        )
         with ui.row().classes("w-full gap-4 flex-wrap"):
             for _, r in latest.iterrows():
                 m = r["metric"]
                 u = UNIT.get(m, "")
                 with ui.card().classes("min-w-[180px] flex-1 items-start"):
                     ui.label(
-                        f"{LABEL.get(m, m)} · {int(r['horizon_min'])} 分鐘後"
+                        f"{LABEL.get(m, m)} · {r['model']} · {int(r['horizon_min'])} 分鐘後"
                     ).classes("text-sm text-gray-500")
                     ui.label(f"{round(float(r['yhat']), 1)} {u}".strip()).classes(
                         "text-2xl font-bold text-indigo-700"
@@ -461,9 +474,8 @@ def main_page() -> None:
                             f"可能範圍 {round(float(lo_v), 1)} – {round(float(hi_v), 1)}"
                         ).classes("text-xs text-gray-400")
         newest = fc["created_at"].max()
-        ui.label(
-            f"模型 {fc.iloc[0]['model']} · 產生於 {newest:%m-%d %H:%M}"
-        ).classes("text-xs text-gray-400")
+        models = "、".join(sorted(fc["model"].unique()))
+        ui.label(f"模型:{models} · 產生於 {newest:%m-%d %H:%M}").classes("text-xs text-gray-400")
 
         ev = load_forecast_eval(state["device_id"])
         if not ev.empty:
@@ -474,22 +486,29 @@ def main_page() -> None:
         cols = [
             {"name": "ts_target", "label": "目標時間", "field": "ts_target", "align": "left"},
             {"name": "metric", "label": "項目", "field": "metric", "align": "left"},
+            {"name": "model", "label": "模型", "field": "model", "align": "left"},
             {"name": "yhat", "label": "預測", "field": "yhat", "align": "left"},
             {"name": "actual", "label": "實際", "field": "actual", "align": "left"},
             {"name": "err", "label": "誤差", "field": "err", "align": "left"},
             {"name": "hit", "label": "命中", "field": "hit", "align": "left"},
         ]
-        ui.table(columns=cols, rows=ev.to_dict("records"), row_key="ts_target").classes("w-full")
+        # ts_target alone can repeat across rows now (both models predict the
+        # same target time each run) — row_key needs a value unique per row.
+        rows = ev.reset_index(drop=True).reset_index(names="_row_id").to_dict("records")
+        ui.table(columns=cols, rows=rows, row_key="_row_id").classes("w-full")
         with ui.column().classes("gap-0.5 mt-1"):
             for m in METRICS:
                 label = LABEL.get(m, m)
-                g = ev[ev["metric"] == label]
-                if g.empty:
+                g_metric = ev[ev["metric"] == label]
+                if g_metric.empty:
                     continue
-                ui.label(
-                    f"{label} · 近 {len(g)} 筆 · 命中率 {(g['hit'] == '✓').mean() * 100:.0f}% · "
-                    f"平均誤差 {g['err'].mean():.2f}"
-                ).classes("text-xs text-gray-400")
+                for model_name in sorted(g_metric["model"].unique()):
+                    g = g_metric[g_metric["model"] == model_name]
+                    ui.label(
+                        f"{label} · {model_name} · 近 {len(g)} 筆 · "
+                        f"命中率 {(g['hit'] == '✓').mean() * 100:.0f}% · "
+                        f"平均誤差 {g['err'].mean():.2f}"
+                    ).classes("text-xs text-gray-400")
 
     @ui.refreshable
     def history_section():

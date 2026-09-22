@@ -84,8 +84,12 @@ MQTT topic contract (`aquaponics/<site>/<device>/…`):
   so overlapping instances can never push the same alert twice.
 - **LINE push** (Messaging API, since LINE Notify was discontinued) with a
   kill switch on the dashboard.
-- **AI baseline** — EWMA + drift 30-min forecast with a predicted-vs-actual
-  hit-rate/MAE panel; gated rolling z-score and multivariate IsolationForest
+- **Champion-challenger forecasting** — a naive EWMA+drift baseline and a
+  gradient-boosted tree (lag/rolling features + time-of-day) run side by
+  side every cycle, both landing in `aqua_forecasts` tagged by `model`; the
+  dashboard's predicted-vs-actual hit-rate/MAE panel is grouped by
+  (metric, model) so the two can be compared on live data instead of
+  swapped on faith. Gated rolling z-score and multivariate IsolationForest
   for anomalies.
 - **Remote control** — pet skin and the pet's hot/cold expression thresholds
   are set from the dashboard via retained MQTT `cmd`.
@@ -110,7 +114,7 @@ Full pipeline deployed and running 24/7 across two boards.
 | Transport | MQTT over TLS — HiveMQ Cloud (Serverless free) |
 | Ingest | Python `paho-mqtt` worker on Render |
 | Storage | Supabase (PostgreSQL) — wide table + `extra jsonb`, `pg_cron` |
-| AI | pandas + scikit-learn: EWMA+drift forecast, rolling z-score → IsolationForest |
+| AI | pandas + scikit-learn: EWMA+drift & GBM forecast (champion-challenger), rolling z-score → IsolationForest |
 | Dashboard | NiceGUI + ECharts on Render |
 | Alerts | LINE Messaging API |
 | Scheduling | GitHub Actions (forecast job) |
