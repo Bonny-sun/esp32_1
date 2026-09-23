@@ -352,6 +352,7 @@ def main_page() -> None:
         "anom_date": (datetime.now(timezone.utc) + timedelta(hours=8)).strftime("%Y-%m-%d"),
         "fc_metric": "溫溼度",
         "fc_date": "全部",
+        "fc_model": "全部",
     }
 
     def device() -> dict:
@@ -506,17 +507,33 @@ def main_page() -> None:
         if state["fc_date"] not in date_options:
             state["fc_date"] = "全部"
 
+        model_options = ["全部"] + sorted(ev_all["model"].unique())
+        if state["fc_model"] not in model_options:
+            state["fc_model"] = "全部"
+
         def on_fc_date_change(e):
             state["fc_date"] = e.value
             forecast_section.refresh()
 
-        ui.select(
-            date_options, value=state["fc_date"], label="日期", on_change=on_fc_date_change
-        ).classes("w-40")
+        def on_fc_model_change(e):
+            state["fc_model"] = e.value
+            forecast_section.refresh()
 
-        ev = ev_all if state["fc_date"] == "全部" else ev_all[ev_all["_date"] == state["fc_date"]]
+        with ui.row().classes("gap-4"):
+            ui.select(
+                date_options, value=state["fc_date"], label="日期", on_change=on_fc_date_change
+            ).classes("w-40")
+            ui.select(
+                model_options, value=state["fc_model"], label="模型", on_change=on_fc_model_change
+            ).classes("w-40")
+
+        ev = ev_all
+        if state["fc_date"] != "全部":
+            ev = ev[ev["_date"] == state["fc_date"]]
+        if state["fc_model"] != "全部":
+            ev = ev[ev["model"] == state["fc_model"]]
         if ev.empty:
-            ui.label("這天沒有可比對的預測資料。").classes("text-xs text-gray-400")
+            ui.label("沒有符合篩選條件的預測資料。").classes("text-xs text-gray-400")
             return
         cols = [
             {"name": "ts_target", "label": "目標時間", "field": "ts_target", "align": "left"},
