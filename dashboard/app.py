@@ -59,6 +59,9 @@ COLOR = {
 # keys must match firmware's petSkinFromString()
 PET_LABEL = {"drop": "水滴", "fish": "魚", "cat": "貓", "panda": "熊貓"}
 RANGE_HOURS = {"24 小時": 24, "7 天": 168, "30 天": 720}
+# ~7 days of forecast rows (2 models x 2 metrics x 48 runs/day) — enough
+# history for the 「上次預測 vs 實際」date picker to have real choices.
+FORECAST_EVAL_LOOKBACK_ROWS = 2 * 2 * 48 * 7
 METRIC_FILTERS = {  # 「近期異常」「上次預測 vs 實際」的項目篩選
     "溫度": ["temperature"],
     "濕度": ["humidity"],
@@ -196,13 +199,13 @@ def load_forecasts(device_id: str) -> pd.DataFrame:
 
 
 @cached(60)
-def load_forecast_eval(device_id: str, limit: int = 96) -> pd.DataFrame:
+def load_forecast_eval(device_id: str, limit: int = FORECAST_EVAL_LOOKBACK_ROWS) -> pd.DataFrame:
     """Match each already-due forecast to the actual reading nearest its
     target time (within 15 min). Returns a small table for the UI.
 
-    limit=96, not 24: each run now writes 2 models x 2 metrics = 4 rows
-    instead of 2, so the old limit only covered half the time span (and
-    half the per-model sample size) it used to."""
+    limit defaults to ~7 days of rows: each run writes 2 models x 2 metrics
+    = 4 rows every 30 min (192/day), and the dashboard's date picker needs
+    more than a single day of history to pick from."""
     now_iso = datetime.now(timezone.utc).isoformat()
     fc = (
         sb().table("aqua_forecasts").select("*").eq("device_id", device_id)
@@ -214,11 +217,17 @@ def load_forecast_eval(device_id: str, limit: int = 96) -> pd.DataFrame:
     f["ts_target"] = pd.to_datetime(f["ts_target"], utc=True, format="ISO8601")
     lo = (f["ts_target"].min() - pd.Timedelta(minutes=15)).isoformat()
     hi = (f["ts_target"].max() + pd.Timedelta(minutes=15)).isoformat()
+    # Telemetry lands roughly once a minute, so a wide [lo, hi] window (the
+    # date picker can span days) needs a limit sized to match — a flat 1000
+    # only covered the most recent ~16h and silently starved older dates of
+    # any match.
+    span_minutes = (pd.Timestamp(hi) - pd.Timestamp(lo)).total_seconds() / 60
+    tel_limit = min(50_000, max(1000, int(span_minutes) + 200))
     tel = (
         sb().table("aqua_telemetry")
         .select("ts,temperature,humidity,water_temp,ph,soil_moisture")
         .eq("device_id", device_id).gte("ts", lo).lte("ts", hi)
-        .order("ts", desc=True).limit(1000).execute().data
+        .order("ts", desc=True).limit(tel_limit).execute().data
     )
     t = pd.DataFrame(tel)
     if t.empty:
@@ -240,9 +249,11 @@ def load_forecast_eval(device_id: str, limit: int = 96) -> pd.DataFrame:
         yhat = float(r["yhat"])
         lo_v, hi_v = r.get("yhat_lower"), r.get("yhat_upper")
         hit = pd.notna(lo_v) and pd.notna(hi_v) and float(lo_v) <= actual <= float(hi_v)
+        ts_local = r["ts_target"].tz_convert(TZ)
         out.append(
             {
-                "ts_target": r["ts_target"].tz_convert(TZ).strftime("%m-%d %H:%M"),
+                "ts_target": ts_local.strftime("%m-%d %H:%M"),
+                "_date": ts_local.strftime("%Y-%m-%d"),
                 "metric": LABEL.get(metric, metric),
                 "model": r["model"],
                 "yhat": round(yhat, 1),
@@ -340,6 +351,7 @@ def main_page() -> None:
         # rows yet (see the date_options guard in anomalies_section)
         "anom_date": (datetime.now(timezone.utc) + timedelta(hours=8)).strftime("%Y-%m-%d"),
         "fc_metric": "溫溼度",
+        "fc_date": "全部",
     }
 
     def device() -> dict:
@@ -482,12 +494,30 @@ def main_page() -> None:
         models = "、".join(sorted(fc["model"].unique()))
         ui.label(f"模型:{models} · 產生於 {newest:%m-%d %H:%M}").classes("text-xs text-gray-400")
 
-        ev = load_forecast_eval(state["device_id"])
-        if not ev.empty:
-            ev = ev[ev["metric"].isin(wanted_labels)]
-        if ev.empty:
+        ev_all = load_forecast_eval(state["device_id"])
+        if not ev_all.empty:
+            ev_all = ev_all[ev_all["metric"].isin(wanted_labels)]
+        if ev_all.empty:
             return
         ui.label("上次預測 vs 實際").classes("text-sm text-gray-500 mt-3")
+
+        dates = sorted(ev_all["_date"].unique(), reverse=True)
+        date_options = ["全部"] + dates
+        if state["fc_date"] not in date_options:
+            state["fc_date"] = "全部"
+
+        def on_fc_date_change(e):
+            state["fc_date"] = e.value
+            forecast_section.refresh()
+
+        ui.select(
+            date_options, value=state["fc_date"], label="日期", on_change=on_fc_date_change
+        ).classes("w-40")
+
+        ev = ev_all if state["fc_date"] == "全部" else ev_all[ev_all["_date"] == state["fc_date"]]
+        if ev.empty:
+            ui.label("這天沒有可比對的預測資料。").classes("text-xs text-gray-400")
+            return
         cols = [
             {"name": "ts_target", "label": "目標時間", "field": "ts_target", "align": "left"},
             {"name": "metric", "label": "項目", "field": "metric", "align": "left"},
