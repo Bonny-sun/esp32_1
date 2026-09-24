@@ -414,3 +414,19 @@ informational, not real threshold breaches.
   `_hour`) would otherwise collapse two different devices' anomalies in
   the same hour into one row. The existing per-device 近期異常 is
   untouched; the two sections now cover the two use cases.
+* **2026-09-24 (later) — moved to its own page.** Embedded in the main
+  page, 全部異常 read as one more section to scroll past rather than a
+  distinct destination — real systems (Grafana Alerting, Zabbix Problems)
+  give this its own nav entry, not a spot on a host's dashboard. Pulled
+  `all_anomalies_section()` and its state out of `main_page()` into a new
+  `@ui.page("/anomalies")` route (`anomalies_page()`) with its own local
+  `state` dict (`metric`/`date`/`device`, no `all_` prefix needed once it
+  isn't sharing a dict with the main page) — same table, filters and
+  hourly-dedupe fix as before, just no longer entangled with
+  `main_page()`'s `state`/`refresh_all()`. Main page's header gained a
+  `warning` icon button linking to `/anomalies`, mirroring the existing
+  `settings` icon → `/admin` pattern; the new page's header (amber, unlike
+  the main page's blue or admin's slate, so it's visually distinct in a
+  screenshot) carries a `← 返回主頁` button back. No auth gate — same
+  already-visible data as the per-device table, just unscoped, so it
+  doesn't need `/admin`'s `ADMIN_AUTH_REQUIRED` treatment.

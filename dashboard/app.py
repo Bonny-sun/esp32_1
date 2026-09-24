@@ -355,9 +355,6 @@ def main_page() -> None:
         "fc_metric": "溫溼度",
         "fc_date": "全部",
         "fc_model": "全部",
-        "all_anom_metric": "溫溼度",
-        "all_anom_date": "全部",
-        "all_anom_device": "全部",
     }
 
     def device() -> dict:
@@ -416,86 +413,6 @@ def main_page() -> None:
                             suffix = f" {UNIT[m]}" if UNIT[m] else ""
                             colour = "text-red-600" if _out_of_band(v, thr.get(m)) else "text-sky-700"
                             ui.label(f"{v}{suffix}").classes(f"text-lg font-bold {colour}")
-
-    @ui.refreshable
-    def all_anomalies_section():
-        # Fleet-wide alarm list: every device mixed into one table, unlike
-        # anomalies_section() below which is scoped to state["device_id"].
-        # Only worth showing once there's more than one device to mix.
-        devs = load_devices()
-        if len(devs) < 2:
-            return
-        dev_ids = [d["device_id"] for d in devs]
-
-        an = load_anomalies(None)
-        wanted = METRIC_FILTERS[state["all_anom_metric"]]
-        if not an.empty:
-            an = an[an["metric"].isin(wanted)]
-        if not an.empty:
-            # 一小時一筆:同一(裝置, 項目, 方法, 整點)只保留最新那筆 —
-            # device_id has to be in the dedupe key here (unlike the
-            # single-device table) or two devices' anomalies in the same
-            # hour would collapse into one row.
-            an = an.assign(_hour=an["ts"].dt.floor("h"))
-            an = (
-                an.sort_values("ts", ascending=False)
-                .drop_duplicates(subset=["device_id", "metric", "method", "_hour"])
-            )
-
-        dates = sorted(an["ts"].dt.strftime("%Y-%m-%d").unique(), reverse=True) if not an.empty else []
-        date_options = ["全部"] + dates
-        if state["all_anom_date"] not in date_options:
-            state["all_anom_date"] = "全部"
-        device_options = ["全部"] + dev_ids
-        if state["all_anom_device"] not in device_options:
-            state["all_anom_device"] = "全部"
-
-        def on_date_change(e):
-            state["all_anom_date"] = e.value
-            all_anomalies_section.refresh()
-
-        def on_device_change(e):
-            state["all_anom_device"] = e.value
-            all_anomalies_section.refresh()
-
-        with ui.row().classes("gap-4"):
-            ui.select(
-                device_options, value=state["all_anom_device"], label="裝置", on_change=on_device_change
-            ).classes("w-40")
-            ui.select(
-                date_options, value=state["all_anom_date"], label="日期", on_change=on_date_change
-            ).classes("w-40")
-        ui.label("每個整點最多一筆").classes("text-xs text-gray-400")
-
-        if state["all_anom_date"] != "全部" and not an.empty:
-            an = an[an["ts"].dt.strftime("%Y-%m-%d") == state["all_anom_date"]]
-        if state["all_anom_device"] != "全部" and not an.empty:
-            an = an[an["device_id"] == state["all_anom_device"]]
-
-        if an.empty:
-            with ui.row().classes("items-center gap-2 text-green-600"):
-                ui.icon("check_circle")
-                ui.label("目前沒有異常紀錄。")
-            return
-        method_label = {
-            "threshold": "超出範圍",
-            "rolling_zscore": "統計偏離",
-            "isolation_forest": "多變量偵測",
-        }
-        show = an[["ts", "device_id", "metric", "value", "method", "note"]].copy()
-        show["ts"] = show["ts"].dt.strftime("%m-%d %H:%M")
-        show["metric"] = show["metric"].map(lambda x: LABEL.get(x, x))
-        show["method"] = show["method"].map(lambda x: method_label.get(x, x))
-        columns = [
-            {"name": "ts", "label": "時間", "field": "ts", "align": "left"},
-            {"name": "device_id", "label": "裝置", "field": "device_id", "align": "left"},
-            {"name": "metric", "label": "項目", "field": "metric", "align": "left"},
-            {"name": "value", "label": "數值", "field": "value", "align": "left"},
-            {"name": "method", "label": "方法", "field": "method", "align": "left"},
-            {"name": "note", "label": "說明", "field": "note", "align": "left"},
-        ]
-        rows = show.reset_index(drop=True).reset_index(names="_row_id").to_dict("records")
-        ui.table(columns=columns, rows=rows, row_key="_row_id").classes("w-full")
 
     @ui.refreshable
     def status_section():
@@ -840,7 +757,6 @@ def main_page() -> None:
     # ------------------------------------------------------------- 事件處理
     def refresh_all():
         overview_section.refresh()
-        all_anomalies_section.refresh()
         status_section.refresh()
         metrics_section.refresh()
         forecast_section.refresh()
@@ -859,10 +775,6 @@ def main_page() -> None:
         state["anom_metric"] = e.value
         anomalies_section.refresh()
 
-    def on_all_anom_metric_change(e):
-        state["all_anom_metric"] = e.value
-        all_anomalies_section.refresh()
-
     def on_fc_metric_change(e):
         state["fc_metric"] = e.value
         forecast_section.refresh()
@@ -876,6 +788,10 @@ def main_page() -> None:
         ui.label("💧 AIoT智慧物聯系統").classes("text-lg font-semibold")
         with ui.row().classes("items-center gap-1"):
             ui.button(
+                icon="warning",
+                on_click=lambda: ui.navigate.to("/anomalies"),
+            ).props("flat round color=white").tooltip("全部異常（跨裝置）")
+            ui.button(
                 icon="settings",
                 # carry the currently-viewed device over, so the admin page
                 # doesn't reset back to the first device in the list
@@ -885,19 +801,6 @@ def main_page() -> None:
 
     with ui.column().classes("w-full max-w-3xl mx-auto p-4 gap-5"):
         overview_section()
-
-        with ui.row().classes("items-center gap-2 mt-2"):
-            ui.label("全部異常").classes("text-lg font-semibold")
-            ui.badge("新增", color="orange", outline=True)
-        ui.label("跨裝置混合列表,依時間排序 · 不受下方「詳細檢視裝置」影響").classes(
-            "text-xs text-gray-400"
-        )
-        ui.toggle(
-            list(METRIC_FILTERS.keys()),
-            value=state["all_anom_metric"],
-            on_change=on_all_anom_metric_change,
-        )
-        all_anomalies_section()
 
         dev_select = ui.select(
             ids, value=state["device_id"], label="詳細檢視裝置", on_change=on_device_change
@@ -926,6 +829,123 @@ def main_page() -> None:
         anomalies_section()
 
     # 每 60 秒自動重新整理一次(對齊裝置上傳週期)。
+    ui.timer(60.0, on_refresh_click)
+
+
+# ------------------------------------------------------------- 全部異常(跨裝置)
+@ui.page("/anomalies", title="🚨 AIoT智慧物聯系統 · 全部異常")
+def anomalies_page() -> None:
+    """Fleet-wide alarm list: every device mixed into one table, sorted by
+    time, independent of any single-device selection — the triage layer
+    that sits alongside the main page's per-device 近期異常 drill-down
+    (same idea as Grafana/Zabbix separating Alerting from a host's own
+    dashboard). Its own page/route rather than a section on the main page
+    so it reads as a first-class destination, not something scrolled past."""
+    ui.colors(primary="#0284c7", secondary="#0891b2", accent="#22c55e", positive="#22c55e")
+
+    devices = load_devices()
+    if not devices:
+        with ui.column().classes("w-full items-center gap-3 p-16"):
+            ui.icon("warning", size="xl").classes("text-amber-500")
+            ui.label("尚未註冊任何裝置。").classes("text-lg text-gray-500")
+        return
+
+    dev_ids = [d["device_id"] for d in devices]
+    state = {"metric": "溫溼度", "date": "全部", "device": "全部"}
+
+    @ui.refreshable
+    def table_section():
+        an = load_anomalies(None)
+        wanted = METRIC_FILTERS[state["metric"]]
+        if not an.empty:
+            an = an[an["metric"].isin(wanted)]
+        if not an.empty:
+            # 一小時一筆:同一(裝置, 項目, 方法, 整點)只保留最新那筆 —
+            # device_id has to be in the dedupe key here (unlike the
+            # per-device table on the main page) or two devices' anomalies
+            # in the same hour would collapse into one row.
+            an = an.assign(_hour=an["ts"].dt.floor("h"))
+            an = (
+                an.sort_values("ts", ascending=False)
+                .drop_duplicates(subset=["device_id", "metric", "method", "_hour"])
+            )
+
+        dates = sorted(an["ts"].dt.strftime("%Y-%m-%d").unique(), reverse=True) if not an.empty else []
+        date_options = ["全部"] + dates
+        if state["date"] not in date_options:
+            state["date"] = "全部"
+        device_options = ["全部"] + dev_ids
+        if state["device"] not in device_options:
+            state["device"] = "全部"
+
+        def on_date_change(e):
+            state["date"] = e.value
+            table_section.refresh()
+
+        def on_device_change(e):
+            state["device"] = e.value
+            table_section.refresh()
+
+        with ui.row().classes("gap-4"):
+            ui.select(
+                device_options, value=state["device"], label="裝置", on_change=on_device_change
+            ).classes("w-40")
+            ui.select(
+                date_options, value=state["date"], label="日期", on_change=on_date_change
+            ).classes("w-40")
+        ui.label("每個整點最多一筆").classes("text-xs text-gray-400")
+
+        if state["date"] != "全部" and not an.empty:
+            an = an[an["ts"].dt.strftime("%Y-%m-%d") == state["date"]]
+        if state["device"] != "全部" and not an.empty:
+            an = an[an["device_id"] == state["device"]]
+
+        if an.empty:
+            with ui.row().classes("items-center gap-2 text-green-600"):
+                ui.icon("check_circle")
+                ui.label("目前沒有異常紀錄。")
+            return
+        method_label = {
+            "threshold": "超出範圍",
+            "rolling_zscore": "統計偏離",
+            "isolation_forest": "多變量偵測",
+        }
+        show = an[["ts", "device_id", "metric", "value", "method", "note"]].copy()
+        show["ts"] = show["ts"].dt.strftime("%m-%d %H:%M")
+        show["metric"] = show["metric"].map(lambda x: LABEL.get(x, x))
+        show["method"] = show["method"].map(lambda x: method_label.get(x, x))
+        columns = [
+            {"name": "ts", "label": "時間", "field": "ts", "align": "left"},
+            {"name": "device_id", "label": "裝置", "field": "device_id", "align": "left"},
+            {"name": "metric", "label": "項目", "field": "metric", "align": "left"},
+            {"name": "value", "label": "數值", "field": "value", "align": "left"},
+            {"name": "method", "label": "方法", "field": "method", "align": "left"},
+            {"name": "note", "label": "說明", "field": "note", "align": "left"},
+        ]
+        rows = show.reset_index(drop=True).reset_index(names="_row_id").to_dict("records")
+        ui.table(columns=columns, rows=rows, row_key="_row_id").classes("w-full")
+
+    def on_metric_change(e):
+        state["metric"] = e.value
+        table_section.refresh()
+
+    def on_refresh_click():
+        clear_cache()
+        table_section.refresh()
+
+    with ui.header().classes("items-center justify-between bg-amber-700 text-white px-4 py-2"):
+        ui.label("🚨 全部異常").classes("text-lg font-semibold")
+        with ui.row().classes("items-center gap-1"):
+            ui.button(icon="refresh", on_click=on_refresh_click).props("flat round color=white")
+            ui.button("← 返回主頁", on_click=lambda: ui.navigate.to("/")).props("flat color=white")
+
+    with ui.column().classes("w-full max-w-3xl mx-auto p-4 gap-5"):
+        ui.label("跨裝置混合列表,依時間排序,不受任何單一裝置選擇影響。").classes(
+            "text-sm text-gray-500"
+        )
+        ui.toggle(list(METRIC_FILTERS.keys()), value=state["metric"], on_change=on_metric_change)
+        table_section()
+
     ui.timer(60.0, on_refresh_click)
 
 
