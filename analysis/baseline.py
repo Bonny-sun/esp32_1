@@ -237,6 +237,15 @@ def detect_univariate(device_id: str, out: pd.DataFrame, cols: list[str]) -> lis
                     "value": float(out.loc[t, c]),
                     "score": round(float(z.loc[t]), 3),
                     "method": "rolling_zscore",
+                    # threshold anomalies get an English note from the SQL
+                    # side ("temperature 30.9 out of band [22, 30.5]") —
+                    # match that style so 近期異常's 說明 column isn't blank
+                    # for this method too.
+                    "note": (
+                        f"{c} {out.loc[t, c]:.1f} deviated {dev.loc[t]:+.1f} "
+                        f"from 1h avg {out.loc[t, f'{c}_roll_mean_prev']:.1f} "
+                        f"(z={z.loc[t]:.1f})"
+                    ),
                 }
             )
     return hits
