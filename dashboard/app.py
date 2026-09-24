@@ -735,18 +735,22 @@ def main_page() -> None:
             "rolling_zscore": "統計偏離",
             "isolation_forest": "多變量偵測",
         }
-        show = an[["ts", "metric", "value", "method", "note"]].copy()
+        show = an[["ts", "device_id", "metric", "value", "method", "note"]].copy()
         show["ts"] = show["ts"].dt.strftime("%m-%d %H:%M")
         show["metric"] = show["metric"].map(lambda x: LABEL.get(x, x))
         show["method"] = show["method"].map(lambda x: method_label.get(x, x))
         columns = [
             {"name": "ts", "label": "時間", "field": "ts", "align": "left"},
+            {"name": "device_id", "label": "裝置", "field": "device_id", "align": "left"},
             {"name": "metric", "label": "項目", "field": "metric", "align": "left"},
             {"name": "value", "label": "數值", "field": "value", "align": "left"},
             {"name": "method", "label": "方法", "field": "method", "align": "left"},
             {"name": "note", "label": "說明", "field": "note", "align": "left"},
         ]
-        ui.table(columns=columns, rows=show.to_dict("records"), row_key="ts").classes("w-full")
+        # ts alone can repeat across rows (two metrics anomalous in the same
+        # minute) — row_key needs a value unique per row.
+        rows = show.reset_index(drop=True).reset_index(names="_row_id").to_dict("records")
+        ui.table(columns=columns, rows=rows, row_key="_row_id").classes("w-full")
 
     # ------------------------------------------------------------- 事件處理
     def refresh_all():
