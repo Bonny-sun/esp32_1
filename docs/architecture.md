@@ -398,3 +398,19 @@ informational, not real threshold breaches.
   **Still open:** same as before — give this 1-2+ days spanning a real
   day/night transition before reading anything into the hit-rate/MAE
   numbers.
+* **2026-09-24 — fleet-wide 全部異常 section.** Every section below the
+  device selector (AI 預測, 歷史趨勢, 近期異常) was scoped to whichever
+  device happened to be selected — a device could go anomalous and stay
+  invisible unless you happened to have it selected at the time. Real
+  monitoring systems (Grafana, Zabbix, PRTG) split this into two layers:
+  a fleet-wide alarm list for triage and a per-device view for deep
+  investigation, rather than one view that only ever shows one device.
+  `load_anomalies(device_id)` now accepts `None` to fetch across every
+  device. New `all_anomalies_section()` reuses the same table shape as
+  `anomalies_section()` but is unscoped, with its own 裝置/項目/日期
+  filters, placed right after 裝置總覽 and before the device selector so
+  it reads as independent of "詳細檢視裝置". Its hourly dedupe key had to
+  gain `device_id` — the existing per-device dedupe (`metric`, `method`,
+  `_hour`) would otherwise collapse two different devices' anomalies in
+  the same hour into one row. The existing per-device 近期異常 is
+  untouched; the two sections now cover the two use cases.
