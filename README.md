@@ -94,7 +94,7 @@ MQTT topic contract (`aquaponics/<site>/<device>/…`):
 - **Remote control** — pet skin and the pet's hot/cold expression thresholds
   are set from the dashboard via retained MQTT `cmd`.
 
-## Status — live (updated 2026-09-21)
+## Status — live (updated 2026-09-24)
 
 Full pipeline deployed and running 24/7 across two boards.
 
