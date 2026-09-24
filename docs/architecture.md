@@ -398,6 +398,43 @@ informational, not real threshold breaches.
   **Still open:** same as before — give this 1-2+ days spanning a real
   day/night transition before reading anything into the hit-rate/MAE
   numbers.
+* **2026-09-23 — history chart x-axis: 6-hour boundaries.** The 24h chart's
+  tick labels landed on 3-hour boundaries (12:00, 15:00, ...); switched the
+  `axisLabel` `:formatter`'s `h%3===0` to `h%6===0` so only 00:00/06:00/
+  12:00/18:00 get a label — reads more naturally.
+* **2026-09-23 (later) — tick spacing scaled to the selected range.** The
+  same 6-hour rule applied unchanged to the 7-day and 30-day views put a
+  label on every 6h boundary across the whole window (28+ for 7 days),
+  crowding the axis into an unreadable wall of text. `history_section()`
+  now builds a different `tick_formatter` depending on `hours`: 6h
+  boundaries for the 24h view, one tick/day for 7 days, one every 3rd day
+  for 30 days (date only, since the time is always 00:00).
+* **2026-09-23 (later) — forecast eval gains a date + model picker.**
+  「上次預測 vs 實際」was always "whatever `load_forecast_eval`'s default
+  limit happened to return," with no way to look at a specific day or
+  isolate one model. `load_forecast_eval`'s default `limit` raised from 96
+  (barely half a day once champion-challenger doubled the row rate) to
+  `FORECAST_EVAL_LOOKBACK_ROWS` (~7 days), each row gains a `_date` field,
+  and the matching `aqua_telemetry` query's limit now scales with the
+  fetched window instead of a flat 1000 that silently starved older dates
+  of any match. `forecast_section()` gained 日期 and 模型 selects mirroring
+  the 近期異常 pattern (`state["fc_date"]`/`state["fc_model"]`, "全部" by
+  default, `forecast_section.refresh()` on change).
+* **2026-09-23 (later) — 近期異常 gains a 裝置 column; row_key fix.** The
+  table was already scoped to `state["device_id"]`, but nothing on the row
+  said so — easy to lose track once you've scrolled past the device
+  selector. Added a `裝置` column. Also fixed `row_key="ts"`: two metrics
+  anomalous in the same minute share a `ts` and collided as table rows;
+  switched to the `_row_id` pattern already used in the forecast eval
+  table.
+* **2026-09-23 (later) — rolling_zscore anomalies get a note.** 說明 was
+  blank for `method=rolling_zscore` rows — the bare value (e.g. "31.7")
+  gives no hint why it was flagged when it barely differs from neighbouring
+  in-band readings. The real story is what it deviated from (the previous
+  1h rolling average via `{col}_roll_mean_prev`), which wasn't surfaced
+  anywhere. `detect_univariate()` now builds a `note` in the same English,
+  SQL-note style as the `threshold` method
+  ("temperature 31.7 deviated +0.6 from 1h avg 31.1 (z=3.8)").
 * **2026-09-24 — fleet-wide 全部異常 section.** Every section below the
   device selector (AI 預測, 歷史趨勢, 近期異常) was scoped to whichever
   device happened to be selected — a device could go anomalous and stay
