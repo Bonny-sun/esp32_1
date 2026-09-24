@@ -98,11 +98,13 @@ MQTT topic contract (`aquaponics/<site>/<device>/…`):
 
 Full pipeline deployed and running 24/7 across two boards.
 
-- **Dashboard sections:** 裝置總覽 (multi-board summary), 全部異常 (fleet-wide
-  alarm list across every device, device + date + metric filters), live values
-  (red when out of band), AI 預測, history charts (10-min bins, dashed
-  上限/下限 lines), 近期異常 (per-device drill-down, defaults to today, date +
-  metric filters), editable alert thresholds.
+- **Dashboard pages:** `/` — 裝置總覽 (multi-board summary), live values (red
+  when out of band), AI 預測, history charts (10-min bins, dashed 上限/下限
+  lines), 近期異常 (per-device drill-down, defaults to today, date + metric
+  filters); `/anomalies` — 全部異常, a fleet-wide alarm list across every
+  device (device + date + metric filters), its own page rather than a
+  section so it reads as a first-class destination, not something scrolled
+  past; `/admin` — editable alert thresholds and other settings.
 - **Supabase `pg_cron`:** hourly rollup, 30-day raw retention, per-minute
   threshold alerting.
 - **AI:** `.github/workflows/forecast.yml` runs `analysis/baseline.py` every
