@@ -363,7 +363,13 @@ def main_page() -> None:
         # rows yet (see the date_options guard in anomalies_section)
         "anom_date": (datetime.now(timezone.utc) + timedelta(hours=8)).strftime("%Y-%m-%d"),
         "fc_metric": "溫溼度",
-        "fc_date": "全部",
+        # default to today (Asia/Taipei); falls back to 全部 if today has no
+        # rows yet (see the date_options guard in forecast_section) — same
+        # pattern as anom_date above. Needed now that load_forecast_eval
+        # correctly returns the full ~7-day history instead of silently
+        # undershooting to ~1 day (see the 2026-09-29 fetch-undershoot fix);
+        # 全部 by default would otherwise dump a week of rows on screen.
+        "fc_date": (datetime.now(timezone.utc) + timedelta(hours=8)).strftime("%Y-%m-%d"),
         "fc_model": "全部",
     }
 
