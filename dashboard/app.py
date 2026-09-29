@@ -64,6 +64,8 @@ PET_LABEL = {"drop": "水滴", "fish": "魚", "cat": "貓", "panda": "熊貓"}
 # the bottom edge has a border" — an explicit border is the same weight on
 # all four sides instead.
 SECTION_CARD_CLASSES = "w-full border-2 border-gray-400"
+# (label, route) in the order they appear in nav_bar()
+NAV_LINKS = [("首頁", "/"), ("異常警戒", "/anomalies"), ("AI預測", "/forecast"), ("後台設定", "/admin")]
 RANGE_HOURS = {"24 小時": 24, "7 天": 168, "30 天": 720}
 # ~7 days of forecast rows (2 models x 2 metrics x 48 runs/day) — enough
 # history for the 「上次預測 vs 實際」date picker to have real choices.
@@ -348,8 +350,40 @@ def publish_pet_state(site_id: str, device_id: str, skin: str, hot: float, cold:
 
 
 # ---------------------------------------------------------------- 介面
-@ui.page("/", title="💧 AIoT智慧物聯系統")
-def main_page() -> None:
+def nav_bar(current: str, on_refresh, device_id_getter=None) -> None:
+    """Shared 4-item nav (首頁/異常警戒/AI預測/後台設定) rendered at the top
+    of every page. Opens its own ui.header() — call it directly, not
+    nested inside another header block.
+
+    Pages are independent NiceGUI sessions with no shared state, so the
+    currently-viewed device (where the target page has one) rides along
+    as a ?device=... query param, same mechanism the old gear-icon link
+    used for /admin. `device_id_getter` is called at CLICK time (not
+    render time) so it always reflects whatever the page's device
+    selector is currently set to, not just its value when the nav bar
+    was first drawn."""
+
+    def go(path: str):
+        def _go():
+            if device_id_getter is not None and path != "/anomalies":
+                ui.navigate.to(f"{path}?device={quote(device_id_getter())}")
+            else:
+                ui.navigate.to(path)
+
+        return _go
+
+    with ui.header().classes("items-center justify-between bg-sky-600 text-white px-4 py-2"):
+        with ui.row().classes("items-center gap-1"):
+            ui.label("💧 AIoT智慧物聯系統").classes("text-lg font-semibold mr-3")
+            for label, path in NAV_LINKS:
+                is_current = path == current
+                btn = ui.button(label, on_click=go(path)).props("flat")
+                btn.classes("bg-white text-sky-700 font-bold" if is_current else "text-white")
+        ui.button(icon="refresh", on_click=on_refresh).props("flat round color=white")
+
+
+@ui.page("/", title="💧 AIoT智慧物聯系統 · 首頁")
+def main_page(device: str = "") -> None:
     ui.colors(primary="#0284c7", secondary="#0891b2", accent="#22c55e", positive="#22c55e")
 
     devices = load_devices()
@@ -362,21 +396,12 @@ def main_page() -> None:
 
     ids = [d["device_id"] for d in devices]
     state = {
-        "device_id": ids[0],
+        "device_id": device if device in ids else ids[0],
         "range_label": "24 小時",
         "anom_metric": "溫溼度",
         # default to today (Asia/Taipei); falls back to 全部 if today has no
         # rows yet (see the date_options guard in anomalies_section)
         "anom_date": (datetime.now(timezone.utc) + timedelta(hours=8)).strftime("%Y-%m-%d"),
-        "fc_metric": "溫溼度",
-        # default to today (Asia/Taipei); falls back to 全部 if today has no
-        # rows yet (see the date_options guard in forecast_section) — same
-        # pattern as anom_date above. Needed now that load_forecast_eval
-        # correctly returns the full ~7-day history instead of silently
-        # undershooting to ~1 day (see the 2026-09-29 fetch-undershoot fix);
-        # 全部 by default would otherwise dump a week of rows on screen.
-        "fc_date": (datetime.now(timezone.utc) + timedelta(hours=8)).strftime("%Y-%m-%d"),
-        "fc_model": "全部",
     }
 
     def device() -> dict:
@@ -474,117 +499,6 @@ def main_page() -> None:
                     ui.label(f"{v}{suffix}").classes(f"text-2xl font-bold {colour}")
                     if out_of_band:
                         ui.label(f"⚠ 超出範圍 [{lo} – {hi}]").classes("text-xs text-red-600")
-
-    @ui.refreshable
-    def forecast_section():
-        fc = load_forecasts(state["device_id"])
-        if fc.empty:
-            ui.label(
-                "尚無預測。執行 analysis/baseline.py（或等排程）後會出現。"
-            ).classes("text-gray-500")
-            return
-        wanted = METRIC_FILTERS[state["fc_metric"]]
-        wanted_labels = [LABEL.get(k, k) for k in wanted]
-        # one card per (metric, model) — champion (ewma+drift) and
-        # challenger (gbm) run side by side, never replacing each other
-        latest = (
-            fc[fc["metric"].isin(wanted)]
-            .sort_values("created_at")
-            .groupby(["metric", "model"])
-            .tail(1)
-            .sort_values(["metric", "model"])
-        )
-        # Fixed 2-column grid, not a flex-wrap row — flex-wrap breaks the
-        # (metric, model) pairing as soon as a row happens to fit 3 cards
-        # instead of 2 (odd number wraps, "氣溫 · gbm" lands alone on the
-        # next line, no longer next to "氣溫 · ewma+drift"). Grid always
-        # keeps every metric's two model-cards on the same row.
-        with ui.grid(columns=2).classes("w-full gap-4"):
-            for _, r in latest.iterrows():
-                m = r["metric"]
-                u = UNIT.get(m, "")
-                with ui.card().classes("items-start"):
-                    ui.label(
-                        f"{LABEL.get(m, m)} · {r['model']} · {int(r['horizon_min'])} 分鐘後"
-                    ).classes("text-sm text-gray-500")
-                    ui.label(f"{round(float(r['yhat']), 1)} {u}".strip()).classes(
-                        "text-2xl font-bold text-indigo-700"
-                    )
-                    lo_v, hi_v = r.get("yhat_lower"), r.get("yhat_upper")
-                    if pd.notna(lo_v) and pd.notna(hi_v):
-                        ui.label(
-                            f"可能範圍 {round(float(lo_v), 1)} – {round(float(hi_v), 1)}"
-                        ).classes("text-xs text-gray-400")
-        newest = fc["created_at"].max()
-        models = "、".join(sorted(fc["model"].unique()))
-        ui.label(f"模型:{models} · 產生於 {newest:%m-%d %H:%M}").classes("text-xs text-gray-400")
-
-        ev_all = load_forecast_eval(state["device_id"])
-        if not ev_all.empty:
-            ev_all = ev_all[ev_all["metric"].isin(wanted_labels)]
-        if ev_all.empty:
-            return
-        ui.label("上次預測 vs 實際").classes("text-sm text-gray-500 mt-3")
-
-        dates = sorted(ev_all["_date"].unique(), reverse=True)
-        date_options = ["全部"] + dates
-        if state["fc_date"] not in date_options:
-            state["fc_date"] = "全部"
-
-        model_options = ["全部"] + sorted(ev_all["model"].unique())
-        if state["fc_model"] not in model_options:
-            state["fc_model"] = "全部"
-
-        def on_fc_date_change(e):
-            state["fc_date"] = e.value
-            forecast_section.refresh()
-
-        def on_fc_model_change(e):
-            state["fc_model"] = e.value
-            forecast_section.refresh()
-
-        with ui.row().classes("gap-4"):
-            ui.select(
-                date_options, value=state["fc_date"], label="日期", on_change=on_fc_date_change
-            ).classes("w-40")
-            ui.select(
-                model_options, value=state["fc_model"], label="模型", on_change=on_fc_model_change
-            ).classes("w-40")
-
-        ev = ev_all
-        if state["fc_date"] != "全部":
-            ev = ev[ev["_date"] == state["fc_date"]]
-        if state["fc_model"] != "全部":
-            ev = ev[ev["model"] == state["fc_model"]]
-        if ev.empty:
-            ui.label("沒有符合篩選條件的預測資料。").classes("text-xs text-gray-400")
-            return
-        cols = [
-            {"name": "ts_target", "label": "目標時間", "field": "ts_target", "align": "left"},
-            {"name": "metric", "label": "項目", "field": "metric", "align": "left"},
-            {"name": "model", "label": "模型", "field": "model", "align": "left"},
-            {"name": "yhat", "label": "預測", "field": "yhat", "align": "left"},
-            {"name": "actual", "label": "實際", "field": "actual", "align": "left"},
-            {"name": "err", "label": "誤差", "field": "err", "align": "left"},
-            {"name": "hit", "label": "命中", "field": "hit", "align": "left"},
-        ]
-        # ts_target alone can repeat across rows now (both models predict the
-        # same target time each run) — row_key needs a value unique per row.
-        rows = ev.reset_index(drop=True).reset_index(names="_row_id").to_dict("records")
-        ui.table(columns=cols, rows=rows, row_key="_row_id").classes("w-full")
-        with ui.column().classes("gap-0.5 mt-1"):
-            for m in METRICS:
-                label = LABEL.get(m, m)
-                g_metric = ev[ev["metric"] == label]
-                if g_metric.empty:
-                    continue
-                for model_name in sorted(g_metric["model"].unique()):
-                    g = g_metric[g_metric["model"] == model_name]
-                    ui.label(
-                        f"{label} · {model_name} · 近 {len(g)} 筆 · "
-                        f"命中率 {(g['hit'] == '✓').mean() * 100:.0f}% · "
-                        f"平均誤差 {g['err'].mean():.2f}"
-                    ).classes("text-xs text-gray-400")
 
     @ui.refreshable
     def history_section():
@@ -781,7 +695,6 @@ def main_page() -> None:
         overview_section.refresh()
         status_section.refresh()
         metrics_section.refresh()
-        forecast_section.refresh()
         history_section.refresh()
         anomalies_section.refresh()
 
@@ -797,29 +710,12 @@ def main_page() -> None:
         state["anom_metric"] = e.value
         anomalies_section.refresh()
 
-    def on_fc_metric_change(e):
-        state["fc_metric"] = e.value
-        forecast_section.refresh()
-
     def on_refresh_click():
         clear_cache()
         refresh_all()
 
     # ---------------------------------------------------------------- 排版
-    with ui.header().classes("items-center justify-between bg-sky-600 text-white px-4 py-2"):
-        ui.label("💧 AIoT智慧物聯系統").classes("text-lg font-semibold")
-        with ui.row().classes("items-center gap-1"):
-            ui.button(
-                icon="warning",
-                on_click=lambda: ui.navigate.to("/anomalies"),
-            ).props("flat round color=white").tooltip("全部異常（跨裝置）")
-            ui.button(
-                icon="settings",
-                # carry the currently-viewed device over, so the admin page
-                # doesn't reset back to the first device in the list
-                on_click=lambda: ui.navigate.to(f"/admin?device={quote(state['device_id'])}"),
-            ).props("flat round color=white").tooltip("AIoT智慧物聯管理後台")
-            ui.button(icon="refresh", on_click=on_refresh_click).props("flat round color=white")
+    nav_bar("/", on_refresh_click, lambda: state["device_id"])
 
     with ui.column().classes("w-full max-w-3xl mx-auto p-4 gap-5"):
         with ui.card().classes(SECTION_CARD_CLASSES).props("flat"):
@@ -831,15 +727,6 @@ def main_page() -> None:
             ).classes("w-56")
             status_section()
             metrics_section()
-
-        with ui.card().classes(SECTION_CARD_CLASSES).props("flat"):
-            ui.label("AI 預測").classes("text-lg font-semibold")
-            ui.toggle(
-                list(METRIC_FILTERS.keys()),
-                value=state["fc_metric"],
-                on_change=on_fc_metric_change,
-            )
-            forecast_section()
 
         with ui.card().classes(SECTION_CARD_CLASSES).props("flat"):
             ui.label("歷史趨勢").classes("text-lg font-semibold")
@@ -859,8 +746,179 @@ def main_page() -> None:
     ui.timer(60.0, on_refresh_click)
 
 
+# --------------------------------------------------------------------- AI 預測
+@ui.page("/forecast", title="🔮 AIoT智慧物聯系統 · AI 預測")
+def forecast_page(device: str = "") -> None:
+    """AI 預測 used to live as a section on the main page; moved to its own
+    route for the same reason 全部異常 did — a first-class nav destination
+    instead of one more thing to scroll past on 首頁. Per-device (unlike
+    /anomalies), so it keeps its own device selector, mirroring /admin's."""
+    ui.colors(primary="#0284c7", secondary="#0891b2", accent="#22c55e", positive="#22c55e")
+
+    devices = load_devices()
+    if not devices:
+        with ui.column().classes("w-full items-center gap-3 p-16"):
+            ui.icon("warning", size="xl").classes("text-amber-500")
+            ui.label("尚未註冊任何裝置。").classes("text-lg text-gray-500")
+        return
+
+    ids = [d["device_id"] for d in devices]
+    state = {
+        "device_id": device if device in ids else ids[0],
+        "fc_metric": "溫溼度",
+        # default to today (Asia/Taipei); falls back to 全部 if today has no
+        # rows yet (see the date_options guard below). load_forecast_eval
+        # returns the full ~7-day history (see the 2026-09-29 fetch-
+        # undershoot fix), so 全部 by default would dump a week on screen.
+        "fc_date": (datetime.now(timezone.utc) + timedelta(hours=8)).strftime("%Y-%m-%d"),
+        "fc_model": "全部",
+    }
+
+    @ui.refreshable
+    def forecast_section():
+        fc = load_forecasts(state["device_id"])
+        if fc.empty:
+            ui.label(
+                "尚無預測。執行 analysis/baseline.py（或等排程）後會出現。"
+            ).classes("text-gray-500")
+            return
+        wanted = METRIC_FILTERS[state["fc_metric"]]
+        wanted_labels = [LABEL.get(k, k) for k in wanted]
+        # one card per (metric, model) — champion (ewma+drift) and
+        # challenger (gbm) run side by side, never replacing each other
+        latest = (
+            fc[fc["metric"].isin(wanted)]
+            .sort_values("created_at")
+            .groupby(["metric", "model"])
+            .tail(1)
+            .sort_values(["metric", "model"])
+        )
+        # Fixed 2-column grid, not a flex-wrap row — flex-wrap breaks the
+        # (metric, model) pairing as soon as a row happens to fit 3 cards
+        # instead of 2 (odd number wraps, "氣溫 · gbm" lands alone on the
+        # next line, no longer next to "氣溫 · ewma+drift"). Grid always
+        # keeps every metric's two model-cards on the same row.
+        with ui.grid(columns=2).classes("w-full gap-4"):
+            for _, r in latest.iterrows():
+                m = r["metric"]
+                u = UNIT.get(m, "")
+                with ui.card().classes("items-start"):
+                    ui.label(
+                        f"{LABEL.get(m, m)} · {r['model']} · {int(r['horizon_min'])} 分鐘後"
+                    ).classes("text-sm text-gray-500")
+                    ui.label(f"{round(float(r['yhat']), 1)} {u}".strip()).classes(
+                        "text-2xl font-bold text-indigo-700"
+                    )
+                    lo_v, hi_v = r.get("yhat_lower"), r.get("yhat_upper")
+                    if pd.notna(lo_v) and pd.notna(hi_v):
+                        ui.label(
+                            f"可能範圍 {round(float(lo_v), 1)} – {round(float(hi_v), 1)}"
+                        ).classes("text-xs text-gray-400")
+        newest = fc["created_at"].max()
+        models = "、".join(sorted(fc["model"].unique()))
+        ui.label(f"模型:{models} · 產生於 {newest:%m-%d %H:%M}").classes("text-xs text-gray-400")
+
+        ev_all = load_forecast_eval(state["device_id"])
+        if not ev_all.empty:
+            ev_all = ev_all[ev_all["metric"].isin(wanted_labels)]
+        if ev_all.empty:
+            return
+        ui.label("上次預測 vs 實際").classes("text-sm text-gray-500 mt-3")
+
+        dates = sorted(ev_all["_date"].unique(), reverse=True)
+        date_options = ["全部"] + dates
+        if state["fc_date"] not in date_options:
+            state["fc_date"] = "全部"
+
+        model_options = ["全部"] + sorted(ev_all["model"].unique())
+        if state["fc_model"] not in model_options:
+            state["fc_model"] = "全部"
+
+        def on_fc_date_change(e):
+            state["fc_date"] = e.value
+            forecast_section.refresh()
+
+        def on_fc_model_change(e):
+            state["fc_model"] = e.value
+            forecast_section.refresh()
+
+        with ui.row().classes("gap-4"):
+            ui.select(
+                date_options, value=state["fc_date"], label="日期", on_change=on_fc_date_change
+            ).classes("w-40")
+            ui.select(
+                model_options, value=state["fc_model"], label="模型", on_change=on_fc_model_change
+            ).classes("w-40")
+
+        ev = ev_all
+        if state["fc_date"] != "全部":
+            ev = ev[ev["_date"] == state["fc_date"]]
+        if state["fc_model"] != "全部":
+            ev = ev[ev["model"] == state["fc_model"]]
+        if ev.empty:
+            ui.label("沒有符合篩選條件的預測資料。").classes("text-xs text-gray-400")
+            return
+        cols = [
+            {"name": "ts_target", "label": "目標時間", "field": "ts_target", "align": "left"},
+            {"name": "metric", "label": "項目", "field": "metric", "align": "left"},
+            {"name": "model", "label": "模型", "field": "model", "align": "left"},
+            {"name": "yhat", "label": "預測", "field": "yhat", "align": "left"},
+            {"name": "actual", "label": "實際", "field": "actual", "align": "left"},
+            {"name": "err", "label": "誤差", "field": "err", "align": "left"},
+            {"name": "hit", "label": "命中", "field": "hit", "align": "left"},
+        ]
+        # ts_target alone can repeat across rows now (both models predict the
+        # same target time each run) — row_key needs a value unique per row.
+        rows = ev.reset_index(drop=True).reset_index(names="_row_id").to_dict("records")
+        ui.table(columns=cols, rows=rows, row_key="_row_id").classes("w-full")
+        with ui.column().classes("gap-0.5 mt-1"):
+            for m in METRICS:
+                label = LABEL.get(m, m)
+                g_metric = ev[ev["metric"] == label]
+                if g_metric.empty:
+                    continue
+                for model_name in sorted(g_metric["model"].unique()):
+                    g = g_metric[g_metric["model"] == model_name]
+                    ui.label(
+                        f"{label} · {model_name} · 近 {len(g)} 筆 · "
+                        f"命中率 {(g['hit'] == '✓').mean() * 100:.0f}% · "
+                        f"平均誤差 {g['err'].mean():.2f}"
+                    ).classes("text-xs text-gray-400")
+
+    def on_device_change(e):
+        state["device_id"] = e.value
+        forecast_section.refresh()
+
+    def on_fc_metric_change(e):
+        state["fc_metric"] = e.value
+        forecast_section.refresh()
+
+    def on_refresh_click():
+        clear_cache()
+        forecast_section.refresh()
+
+    nav_bar("/forecast", on_refresh_click, lambda: state["device_id"])
+
+    with ui.column().classes("w-full max-w-3xl mx-auto p-4 gap-5"):
+        with ui.card().classes(SECTION_CARD_CLASSES).props("flat"):
+            ui.select(
+                ids, value=state["device_id"], label="檢視裝置", on_change=on_device_change
+            ).classes("w-56")
+
+        with ui.card().classes(SECTION_CARD_CLASSES).props("flat"):
+            ui.label("AI 預測").classes("text-lg font-semibold")
+            ui.toggle(
+                list(METRIC_FILTERS.keys()),
+                value=state["fc_metric"],
+                on_change=on_fc_metric_change,
+            )
+            forecast_section()
+
+    ui.timer(60.0, on_refresh_click)
+
+
 # ------------------------------------------------------------- 全部異常(跨裝置)
-@ui.page("/anomalies", title="🚨 AIoT智慧物聯系統 · 全部異常")
+@ui.page("/anomalies", title="🚨 AIoT智慧物聯系統 · 異常警戒")
 def anomalies_page() -> None:
     """Fleet-wide alarm list: every device mixed into one table, sorted by
     time, independent of any single-device selection — the triage layer
@@ -960,32 +1018,31 @@ def anomalies_page() -> None:
         clear_cache()
         table_section.refresh()
 
-    with ui.header().classes("items-center justify-between bg-amber-700 text-white px-4 py-2"):
-        ui.label("🚨 全部異常").classes("text-lg font-semibold")
-        with ui.row().classes("items-center gap-1"):
-            ui.button(icon="refresh", on_click=on_refresh_click).props("flat round color=white")
-            ui.button("← 返回主頁", on_click=lambda: ui.navigate.to("/")).props("flat color=white")
+    nav_bar("/anomalies", on_refresh_click)
 
     with ui.column().classes("w-full max-w-3xl mx-auto p-4 gap-5"):
-        ui.label("跨裝置混合列表,依時間排序,不受任何單一裝置選擇影響。").classes(
-            "text-sm text-gray-500"
-        )
-        ui.toggle(list(METRIC_FILTERS.keys()), value=state["metric"], on_change=on_metric_change)
-        table_section()
+        with ui.card().classes(SECTION_CARD_CLASSES).props("flat"):
+            ui.label("異常警戒").classes("text-lg font-semibold")
+            ui.label("跨裝置混合列表,依時間排序,不受任何單一裝置選擇影響。").classes(
+                "text-sm text-gray-500"
+            )
+            ui.toggle(list(METRIC_FILTERS.keys()), value=state["metric"], on_change=on_metric_change)
+            table_section()
 
     ui.timer(60.0, on_refresh_click)
 
 
 # ---------------------------------------------------------------- 管理後台
-@ui.page("/admin", title="⚙️ AIoT智慧物聯管理後台")
+@ui.page("/admin", title="⚙️ AIoT智慧物聯系統 · 後台設定")
 def admin_page(device: str = "") -> None:
     """所有需要設定/會改變裝置或雲端行為的功能都集中在這裡:推播設定、
     顯示設定(OLED 虛擬寵物)、警戒設定。主頁維持純檢視,不放任何設定。
 
-    `device` is an optional ?device=... query param the main page's gear
-    icon carries over, so switching to admin doesn't reset back to the
-    first device in the list — pages are independent NiceGUI sessions with
-    no shared state, so this query param is the only link between them."""
+    `device` is an optional ?device=... query param nav_bar() carries over
+    from whichever page linked here, so switching to admin doesn't reset
+    back to the first device in the list — pages are independent NiceGUI
+    sessions with no shared state, so this query param is the only link
+    between them."""
     ui.colors(primary="#0284c7", secondary="#0891b2", accent="#22c55e", positive="#22c55e")
 
     devices = load_devices()
@@ -1143,9 +1200,17 @@ def admin_page(device: str = "") -> None:
             ui.label("警戒設定").classes("text-lg font-semibold")
             alert_section()
 
-    with ui.header().classes("items-center justify-between bg-slate-700 text-white px-4 py-2"):
-        ui.label("⚙️ AIoT智慧物聯管理後台").classes("text-lg font-semibold")
-        ui.button("← 返回主頁", on_click=lambda: ui.navigate.to("/")).props("flat color=white")
+    def on_refresh_click():
+        # No auto ui.timer for this page — unlike the read-only pages, a
+        # background refresh here would call alert_section.refresh() and
+        # silently wipe whatever threshold edits are sitting unsaved in the
+        # number inputs. Manual only.
+        clear_cache()
+        notify_section.refresh()
+        display_section.refresh()
+        alert_section.refresh()
+
+    nav_bar("/admin", on_refresh_click, lambda: state["device_id"])
 
     with ui.column().classes("w-full max-w-3xl mx-auto p-4 gap-5"):
         gate_or_content()
