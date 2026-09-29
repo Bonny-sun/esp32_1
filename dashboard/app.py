@@ -58,6 +58,12 @@ COLOR = {
 }
 # keys must match firmware's petSkinFromString()
 PET_LABEL = {"drop": "水滴", "fish": "魚", "cat": "貓", "panda": "熊貓"}
+# Shared "functional block" card look for both the main page and admin page.
+# `flat` drops Quasar's default elevation shadow, which is directional
+# (heavier below than above/left/right) and on a tall card reads as "only
+# the bottom edge has a border" — an explicit border is the same weight on
+# all four sides instead.
+SECTION_CARD_CLASSES = "w-full border-2 border-gray-400"
 RANGE_HOURS = {"24 小時": 24, "7 天": 168, "30 天": 720}
 # ~7 days of forecast rows (2 models x 2 metrics x 48 runs/day) — enough
 # history for the 「上次預測 vs 實際」date picker to have real choices.
@@ -815,24 +821,18 @@ def main_page() -> None:
             ).props("flat round color=white").tooltip("AIoT智慧物聯管理後台")
             ui.button(icon="refresh", on_click=on_refresh_click).props("flat round color=white")
 
-    # A section card uses an explicit border, not the default shadow —
-    # Quasar's card elevation shadow is directional (heavier below than
-    # above/left/right), so on a tall card it reads as "only the bottom
-    # edge is visible." `flat` drops that shadow; the border is then the
-    # only edge cue, and it's the same weight on all four sides.
-    section_card = "w-full border border-gray-300"
     with ui.column().classes("w-full max-w-3xl mx-auto p-4 gap-5"):
-        with ui.card().classes(section_card).props("flat"):
+        with ui.card().classes(SECTION_CARD_CLASSES).props("flat"):
             overview_section()
 
-        with ui.card().classes(section_card).props("flat"):
+        with ui.card().classes(SECTION_CARD_CLASSES).props("flat"):
             dev_select = ui.select(
                 ids, value=state["device_id"], label="詳細檢視裝置", on_change=on_device_change
             ).classes("w-56")
             status_section()
             metrics_section()
 
-        with ui.card().classes(section_card).props("flat"):
+        with ui.card().classes(SECTION_CARD_CLASSES).props("flat"):
             ui.label("AI 預測").classes("text-lg font-semibold")
             ui.toggle(
                 list(METRIC_FILTERS.keys()),
@@ -841,12 +841,12 @@ def main_page() -> None:
             )
             forecast_section()
 
-        with ui.card().classes(section_card).props("flat"):
+        with ui.card().classes(SECTION_CARD_CLASSES).props("flat"):
             ui.label("歷史趨勢").classes("text-lg font-semibold")
             ui.toggle(list(RANGE_HOURS.keys()), value=state["range_label"], on_change=on_range_change)
             history_section()
 
-        with ui.card().classes(section_card).props("flat"):
+        with ui.card().classes(SECTION_CARD_CLASSES).props("flat"):
             ui.label("近期異常").classes("text-lg font-semibold")
             ui.toggle(
                 list(METRIC_FILTERS.keys()),
@@ -1131,14 +1131,17 @@ def admin_page(device: str = "") -> None:
             ids, value=state["device_id"], label="設定裝置", on_change=on_device_change
         ).classes("w-56")
 
-        ui.label("推播設定").classes("text-lg font-semibold mt-2")
-        notify_section()
+        with ui.card().classes(SECTION_CARD_CLASSES).props("flat"):
+            ui.label("推播設定").classes("text-lg font-semibold")
+            notify_section()
 
-        ui.label("顯示設定").classes("text-lg font-semibold mt-2")
-        display_section()
+        with ui.card().classes(SECTION_CARD_CLASSES).props("flat"):
+            ui.label("顯示設定").classes("text-lg font-semibold")
+            display_section()
 
-        ui.label("警戒設定").classes("text-lg font-semibold mt-2")
-        alert_section()
+        with ui.card().classes(SECTION_CARD_CLASSES).props("flat"):
+            ui.label("警戒設定").classes("text-lg font-semibold")
+            alert_section()
 
     with ui.header().classes("items-center justify-between bg-slate-700 text-white px-4 py-2"):
         ui.label("⚙️ AIoT智慧物聯管理後台").classes("text-lg font-semibold")
