@@ -220,18 +220,28 @@ def load_forecast_eval(device_id: str, limit: int = FORECAST_EVAL_LOOKBACK_ROWS)
     lo = (f["ts_target"].min() - pd.Timedelta(minutes=15)).isoformat()
     hi = (f["ts_target"].max() + pd.Timedelta(minutes=15)).isoformat()
     # Telemetry lands roughly once a minute, so a wide [lo, hi] window (the
-    # date picker can span days) needs a limit sized to match — a flat 1000
-    # only covered the most recent ~16h and silently starved older dates of
-    # any match.
-    span_minutes = (pd.Timestamp(hi) - pd.Timestamp(lo)).total_seconds() / 60
-    tel_limit = min(50_000, max(1000, int(span_minutes) + 200))
-    tel = (
-        sb().table("aqua_telemetry")
-        .select("ts,temperature,humidity,water_temp,ph,soil_moisture")
-        .eq("device_id", device_id).gte("ts", lo).lte("ts", hi)
-        .order("ts", desc=True).limit(tel_limit).execute().data
-    )
-    t = pd.DataFrame(tel)
+    # date picker's range grows for as long as ewma+drift has been running —
+    # weeks, not days) can hold more rows than any single guessed limit
+    # safely covers. A flat 1000, then a "span_minutes + margin" estimate,
+    # both silently truncated to the newest slice of the window once the
+    # real row count crept past the guess, starving older dates of any
+    # match even though the telemetry existed. Page through NEWEST-first
+    # instead — the same fix, and the same PostgREST page-size limit, as
+    # baseline.py's load_history() — so this can never undershoot.
+    tel_rows: list = []
+    for page in range(60):  # 60 * 1000 = 60k row ceiling
+        chunk = (
+            sb().table("aqua_telemetry")
+            .select("ts,temperature,humidity,water_temp,ph,soil_moisture")
+            .eq("device_id", device_id).gte("ts", lo).lte("ts", hi)
+            .order("ts", desc=True)
+            .range(page * 1000, page * 1000 + 999)
+            .execute().data
+        )
+        tel_rows.extend(chunk)
+        if len(chunk) < 1000:
+            break
+    t = pd.DataFrame(tel_rows)
     if t.empty:
         return pd.DataFrame()
     t["ts"] = pd.to_datetime(t["ts"], utc=True, format="ISO8601")
