@@ -547,3 +547,14 @@ informational, not real threshold breaches.
   click target for `select_device()`. Keeps the existing behaviour:
   online/offline dot, red text when a value is outside the configured
   threshold, and the selected device's row highlighted.
+* **2026-09-29 (later) — 裝置總覽 gains a 最後上線時間 column.** Added a
+  5th column at the end of the table. Gave it a distinct meaning from the
+  existing "時間" column rather than showing the same value twice: "時間"
+  now reads `aqua_latest.ts` (the latest telemetry reading's own
+  timestamp, previously unused on this page), while "最後上線時間" is the
+  device's `last_seen` heartbeat field as a full date-time — the same
+  value and wording already used in 詳細檢視's "上線 · 最後上線" line
+  below. 5 columns no longer fit a phone screen without the new header
+  wrapping across 3 lines, so the grid got a fixed `min-w` and its
+  wrapper scrolls horizontally on narrow viewports instead of shrinking
+  columns below a legible width.
