@@ -535,3 +535,15 @@ informational, not real threshold breaches.
   just its value when the nav bar first drew; `/anomalies` has no
   per-device concept, so it's the one nav link that never gets the
   param.
+* **2026-09-29 (later) — 裝置總覽 rebuilt as a table.** Per-device cards
+  worked for two devices but didn't read as a summary table at a glance,
+  and would wrap awkwardly past two. Rebuilt as a 4-column CSS grid
+  (裝置名稱/時間/溫度/濕度) styled like a real table — blue header, banded
+  rows — matching a mockup the user provided. `ui.table` doesn't expose
+  per-cell background or a whole-row click target without fighting its
+  Quasar internals, so each row is instead a `display: contents` div: it
+  renders no box of its own, so its four `ui.label` children still land
+  directly in the parent grid's own columns, while the div itself is one
+  click target for `select_device()`. Keeps the existing behaviour:
+  online/offline dot, red text when a value is outside the configured
+  threshold, and the selected device's row highlighted.
