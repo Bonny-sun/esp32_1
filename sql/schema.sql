@@ -177,6 +177,9 @@ select cron.schedule('aqua_prune_raw',     '10 3 * * *',   $$ select public.aqua
 -- ---------------------------------------------------------------------------
 --  8. Seed the first device (edit to match include/secrets.h)
 -- ---------------------------------------------------------------------------
-insert into public.aqua_devices (device_id, site_id, name, location, fw_version)
-values ('esp32-aqua-01', 'home', 'Water Guardian #1', 'desk prototype', '0.1.0')
+-- name left unset: the dashboard falls back to showing device_id when it's
+-- null, same as every device auto-registered later by the multi-board flow
+-- — a seeded name here made this one device look inconsistently different.
+insert into public.aqua_devices (device_id, site_id, location, fw_version)
+values ('esp32-aqua-01', 'home', 'desk prototype', '0.1.0')
 on conflict (device_id) do nothing;
