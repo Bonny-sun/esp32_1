@@ -430,39 +430,58 @@ def main_page(device: str = "") -> None:
         latest_map = load_all_latest()
         ui.label("裝置總覽（點列切換下方詳細檢視）").classes("text-lg font-semibold")
         # A real ui.table doesn't expose per-cell background/click easily, so
-        # this fakes one with a 4-col CSS grid: each row is a `contents` div
+        # this fakes one with a 5-col CSS grid: each row is a `contents` div
         # (renders no box of its own, just lets its children join the grid)
         # so the whole row is one click target while every cell still lands
-        # in its own grid column.
-        with ui.grid(columns="1.4fr 1fr 0.8fr 0.8fr").classes(
-            "w-full gap-0 rounded overflow-hidden border border-sky-600"
-        ):
-            for col in ("裝置名稱", "時間", "溫度", "濕度"):
-                ui.label(col).classes("bg-sky-600 text-white font-semibold text-sm px-3 py-2")
-            for i, d in enumerate(devs):
-                did = d["device_id"]
-                lt = latest_map.get(did, {})
-                thr = load_thresholds(did)
-                ls = d.get("last_seen")
-                seen = pd.to_datetime(ls, utc=True, format="ISO8601") if ls else None
-                online = bool(seen and (datetime.now(timezone.utc) - seen).total_seconds() < 300)
-                sel = did == state["device_id"]
-                row_bg = "bg-sky-100" if sel else ("bg-sky-50" if i % 2 else "bg-white")
-                cell = f"{row_bg} px-3 py-2 text-sm border-t border-sky-100"
-                with ui.element("div").classes("contents cursor-pointer").on(
-                    "click", lambda did=did: select_device(did)
-                ):
-                    ui.label(f"{'🟢' if online else '🔴'} {d.get('name') or did}").classes(
-                        f"{cell} font-medium"
+        # in its own grid column. 5 columns no longer fit a phone screen
+        # without wrapping into an unreadable stack, so the grid gets a fixed
+        # min-width and the wrapper scrolls horizontally instead of shrinking
+        # columns below a legible width.
+        with ui.row().classes("w-full overflow-x-auto"):
+            with ui.grid(columns="1.3fr 0.9fr 0.7fr 0.7fr 1.3fr").classes(
+                "gap-0 rounded overflow-hidden border border-sky-600 min-w-[640px] flex-1"
+            ):
+                for col in ("裝置名稱", "時間", "溫度", "濕度", "最後上線時間"):
+                    ui.label(col).classes("bg-sky-600 text-white font-semibold text-sm px-3 py-2")
+                for i, d in enumerate(devs):
+                    did = d["device_id"]
+                    lt = latest_map.get(did, {})
+                    thr = load_thresholds(did)
+                    reading_ts = lt.get("ts")
+                    reading_time = (
+                        pd.to_datetime(reading_ts, utc=True, format="ISO8601")
+                        if reading_ts
+                        else None
                     )
-                    ui.label(seen.tz_convert(TZ).strftime("%H:%M:%S") if seen else "—").classes(
-                        f"{cell} text-gray-600"
+                    ls = d.get("last_seen")
+                    seen = pd.to_datetime(ls, utc=True, format="ISO8601") if ls else None
+                    online = bool(
+                        seen and (datetime.now(timezone.utc) - seen).total_seconds() < 300
                     )
-                    for m in ("temperature", "humidity"):
-                        v = lt.get(m)
-                        colour = "text-red-600" if _out_of_band(v, thr.get(m)) else "text-sky-700"
-                        text = f"{v}{UNIT[m]}" if v is not None else "—"
-                        ui.label(text).classes(f"{cell} font-semibold {colour}")
+                    sel = did == state["device_id"]
+                    row_bg = "bg-sky-100" if sel else ("bg-sky-50" if i % 2 else "bg-white")
+                    cell = f"{row_bg} px-3 py-2 text-sm border-t border-sky-100"
+                    with ui.element("div").classes("contents cursor-pointer").on(
+                        "click", lambda did=did: select_device(did)
+                    ):
+                        ui.label(f"{'🟢' if online else '🔴'} {d.get('name') or did}").classes(
+                            f"{cell} font-medium"
+                        )
+                        ui.label(
+                            reading_time.tz_convert(TZ).strftime("%H:%M:%S")
+                            if reading_time
+                            else "—"
+                        ).classes(f"{cell} text-gray-600")
+                        for m in ("temperature", "humidity"):
+                            v = lt.get(m)
+                            colour = (
+                                "text-red-600" if _out_of_band(v, thr.get(m)) else "text-sky-700"
+                            )
+                            text = f"{v}{UNIT[m]}" if v is not None else "—"
+                            ui.label(text).classes(f"{cell} font-semibold {colour}")
+                        ui.label(
+                            seen.tz_convert(TZ).strftime("%Y-%m-%d %H:%M:%S") if seen else "—"
+                        ).classes(f"{cell} text-gray-600")
 
     @ui.refreshable
     def status_section():
