@@ -816,33 +816,38 @@ def main_page() -> None:
             ui.button(icon="refresh", on_click=on_refresh_click).props("flat round color=white")
 
     with ui.column().classes("w-full max-w-3xl mx-auto p-4 gap-5"):
-        overview_section()
+        with ui.card().classes("w-full"):
+            overview_section()
 
-        dev_select = ui.select(
-            ids, value=state["device_id"], label="詳細檢視裝置", on_change=on_device_change
-        ).classes("w-56")
-        status_section()
-        metrics_section()
+        with ui.card().classes("w-full"):
+            dev_select = ui.select(
+                ids, value=state["device_id"], label="詳細檢視裝置", on_change=on_device_change
+            ).classes("w-56")
+            status_section()
+            metrics_section()
 
-        ui.label("AI 預測").classes("text-lg font-semibold mt-2")
-        ui.toggle(
-            list(METRIC_FILTERS.keys()),
-            value=state["fc_metric"],
-            on_change=on_fc_metric_change,
-        )
-        forecast_section()
+        with ui.card().classes("w-full"):
+            ui.label("AI 預測").classes("text-lg font-semibold")
+            ui.toggle(
+                list(METRIC_FILTERS.keys()),
+                value=state["fc_metric"],
+                on_change=on_fc_metric_change,
+            )
+            forecast_section()
 
-        ui.label("歷史趨勢").classes("text-lg font-semibold mt-2")
-        ui.toggle(list(RANGE_HOURS.keys()), value=state["range_label"], on_change=on_range_change)
-        history_section()
+        with ui.card().classes("w-full"):
+            ui.label("歷史趨勢").classes("text-lg font-semibold")
+            ui.toggle(list(RANGE_HOURS.keys()), value=state["range_label"], on_change=on_range_change)
+            history_section()
 
-        ui.label("近期異常").classes("text-lg font-semibold mt-2")
-        ui.toggle(
-            list(METRIC_FILTERS.keys()),
-            value=state["anom_metric"],
-            on_change=on_anom_metric_change,
-        )
-        anomalies_section()
+        with ui.card().classes("w-full"):
+            ui.label("近期異常").classes("text-lg font-semibold")
+            ui.toggle(
+                list(METRIC_FILTERS.keys()),
+                value=state["anom_metric"],
+                on_change=on_anom_metric_change,
+            )
+            anomalies_section()
 
     # 每 60 秒自動重新整理一次(對齊裝置上傳週期)。
     ui.timer(60.0, on_refresh_click)
