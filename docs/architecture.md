@@ -467,3 +467,28 @@ informational, not real threshold breaches.
   screenshot) carries a `← 返回主頁` button back. No auth gate — same
   already-visible data as the per-device table, just unscoped, so it
   doesn't need `/admin`'s `ADMIN_AUTH_REQUIRED` treatment.
+* **2026-09-29 — forecast eval telemetry fetch undershoot.** After ~7 days
+  of gbm running (both devices), 「上次預測 vs 實際」only ever showed 3-4
+  matched samples per (metric, model), reaching back barely 18-24h, even
+  though `ewma+drift` has produced forecasts since project start and the
+  24h/72h/336h telemetry views all showed fully dense data — ruled out via
+  the resampled-row counts in a fresh forecast.yml job log (`865`/`4033`
+  rows matching the theoretical maximum for 72h/336h at 5-min bins) and the
+  24h chart's `144/144` 10-min bins. Root cause: `load_forecast_eval`'s
+  telemetry fetch estimated one `tel_limit` from the `[lo, hi]` window's
+  span in minutes (~1 row/min) and fetched that many rows in a single
+  `.order(desc).limit()` call. Once `ewma+drift`'s history stretched that
+  window past 3 weeks, the margin over the real row count was down to
+  ~0.6% in the worst case checked — any real-world variance in reporting
+  rate silently truncates the fetch to the newest slice, starving every
+  older forecast of a match even though the telemetry existed. Same class
+  of bug as the 2026-09-07 "PostgREST 1000-row cap" fix, just with a
+  bigger guess instead of no guessing. Fixed by paging through
+  NEWEST-first with `.range()` until a short page — the same pattern
+  `baseline.py`'s `load_history()` already uses for the identical
+  PostgREST limit, so it can't undershoot regardless of the real
+  telemetry density. Verified with a fake Supabase client: a 22-day
+  window with ~31.7k telemetry rows against 132 sparse forecast rows —
+  the old single-shot `limit(31670)` undershot the real count (31701) by
+  31 rows; the paginated fetch matched all 132 rows across all 23
+  distinct dates.
