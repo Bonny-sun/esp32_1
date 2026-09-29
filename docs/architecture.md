@@ -492,3 +492,46 @@ informational, not real threshold breaches.
   the old single-shot `limit(31670)` undershot the real count (31701) by
   31 rows; the paginated fetch matched all 132 rows across all 23
   distinct dates.
+* **2026-09-29 (later) — forecast eval defaults to today.** With the
+  undershoot fixed, 上次預測 vs 實際 started returning its full ~7-day
+  history by default (`state["fc_date"]` initialized to `"全部"`), which
+  is too much to read at a glance. Defaults `fc_date` to today
+  (Asia/Taipei) instead; the existing "not in `date_options`" guard
+  already falls back to `全部` on a day with no rows yet, so this needed
+  no new fallback logic.
+* **2026-09-29 (later) — dropped the seeded device name.** `esp32-aqua-01`
+  showed as "Water Guardian #1" on 裝置總覽 while `esp32-aqua-02` (added
+  later via the multi-board auto-register flow, which never sets `name`)
+  showed its raw `device_id` — an inconsistency from `schema.sql`'s
+  one-time seed insert, not a real distinction. Removed the seeded `name`
+  so both devices fall back to `device_id` the same way; a comment in
+  `schema.sql` explains why it's left unset.
+* **2026-09-29 (later) — visible borders on every functional section.**
+  Each card-like section (裝置總覽, 歷史趨勢, 近期異常, and admin's
+  推播設定/顯示設定/警戒設定) used Quasar's default `QCard` elevation,
+  whose box-shadow is heavier below the card than above or beside it — at
+  a glance it read as "a line under this block," not a box around it.
+  Added a module-level `SECTION_CARD_CLASSES` (`.props("flat")` to drop
+  the shadow, plus explicit Tailwind `border-2 border-gray-400` for a
+  uniform 4-side border) and applied it to every section's outer card,
+  including 推播設定 on the admin page which previously had no box at all
+  and 顯示設定/警戒設定 which only boxed their inner content card, not the
+  section as a whole.
+* **2026-09-29 (later) — AI 預測 moved to its own /forecast page; shared
+  nav bar.** 首頁 had grown five independent sections to scroll past
+  (裝置總覽/裝置詳情/歷史趨勢/近期異常/AI預測), and `/anomalies`/`/admin`
+  each had their own one-off header (icon links, a `← 返回主頁` button)
+  with no consistent way to move between pages — the same "first-class
+  destination, not a spot on a host's dashboard" reasoning that moved
+  全部異常 to `/anomalies` on 2026-09-24. Added a shared `nav_bar()`
+  rendering 首頁/異常警戒/AI預測/後台設定, in that fixed order, at the top
+  of every page, highlighting whichever one is current. Pulled the
+  AI 預測 section (and its `fc_metric`/`fc_date`/`fc_model` state) out of
+  `main_page()` into a new `@ui.page("/forecast")` route with its own
+  device selector, mirroring `/admin`'s. The active device now rides
+  along as a `?device=` query param between pages that have one — read at
+  click time via a closure over the page's `state` dict, not render time,
+  so it always reflects whatever the selector is currently set to, not
+  just its value when the nav bar first drew; `/anomalies` has no
+  per-device concept, so it's the one nav link that never gets the
+  param.
