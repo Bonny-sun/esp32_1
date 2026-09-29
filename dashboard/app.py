@@ -815,18 +815,24 @@ def main_page() -> None:
             ).props("flat round color=white").tooltip("AIoT智慧物聯管理後台")
             ui.button(icon="refresh", on_click=on_refresh_click).props("flat round color=white")
 
+    # A section card uses an explicit border, not the default shadow —
+    # Quasar's card elevation shadow is directional (heavier below than
+    # above/left/right), so on a tall card it reads as "only the bottom
+    # edge is visible." `flat` drops that shadow; the border is then the
+    # only edge cue, and it's the same weight on all four sides.
+    section_card = "w-full border border-gray-300"
     with ui.column().classes("w-full max-w-3xl mx-auto p-4 gap-5"):
-        with ui.card().classes("w-full"):
+        with ui.card().classes(section_card).props("flat"):
             overview_section()
 
-        with ui.card().classes("w-full"):
+        with ui.card().classes(section_card).props("flat"):
             dev_select = ui.select(
                 ids, value=state["device_id"], label="詳細檢視裝置", on_change=on_device_change
             ).classes("w-56")
             status_section()
             metrics_section()
 
-        with ui.card().classes("w-full"):
+        with ui.card().classes(section_card).props("flat"):
             ui.label("AI 預測").classes("text-lg font-semibold")
             ui.toggle(
                 list(METRIC_FILTERS.keys()),
@@ -835,12 +841,12 @@ def main_page() -> None:
             )
             forecast_section()
 
-        with ui.card().classes("w-full"):
+        with ui.card().classes(section_card).props("flat"):
             ui.label("歷史趨勢").classes("text-lg font-semibold")
             ui.toggle(list(RANGE_HOURS.keys()), value=state["range_label"], on_change=on_range_change)
             history_section()
 
-        with ui.card().classes("w-full"):
+        with ui.card().classes(section_card).props("flat"):
             ui.label("近期異常").classes("text-lg font-semibold")
             ui.toggle(
                 list(METRIC_FILTERS.keys()),
