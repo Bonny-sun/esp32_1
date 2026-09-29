@@ -94,17 +94,21 @@ MQTT topic contract (`aquaponics/<site>/<device>/…`):
 - **Remote control** — pet skin and the pet's hot/cold expression thresholds
   are set from the dashboard via retained MQTT `cmd`.
 
-## Status — live (updated 2026-09-24)
+## Status — live (updated 2026-09-29)
 
 Full pipeline deployed and running 24/7 across two boards.
 
-- **Dashboard pages:** `/` — 裝置總覽 (multi-board summary), live values (red
-  when out of band), AI 預測, history charts (10-min bins, dashed 上限/下限
-  lines), 近期異常 (per-device drill-down, defaults to today, date + metric
-  filters); `/anomalies` — 全部異常, a fleet-wide alarm list across every
-  device (device + date + metric filters), its own page rather than a
-  section so it reads as a first-class destination, not something scrolled
-  past; `/admin` — editable alert thresholds and other settings.
+- **Dashboard pages**, all sharing one top nav bar (首頁/異常警戒/AI預測/
+  後台設定): `/` — 裝置總覽 (multi-board summary), live values (red when out
+  of band), history charts (10-min bins, dashed 上限/下限 lines), 近期異常
+  (per-device drill-down, defaults to today, date + metric filters);
+  `/forecast` — AI 預測, per-device forecast cards (champion `ewma+drift` vs
+  challenger `gbm`) plus a 上次預測 vs 實際 eval table (date + model
+  filters, defaults to today); `/anomalies` — 全部異常, a fleet-wide alarm
+  list across every device (device + date + metric filters), its own page
+  rather than a section so it reads as a first-class destination, not
+  something scrolled past; `/admin` — editable alert thresholds and other
+  settings.
 - **Supabase `pg_cron`:** hourly rollup, 30-day raw retention, per-minute
   threshold alerting.
 - **AI:** `.github/workflows/forecast.yml` runs `analysis/baseline.py` every
