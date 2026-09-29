@@ -428,38 +428,41 @@ def main_page(device: str = "") -> None:
         if len(devs) < 2:
             return  # 只有一台時不用總覽
         latest_map = load_all_latest()
-        ui.label("裝置總覽（點卡片切換下方詳細檢視）").classes("text-lg font-semibold")
-        with ui.row().classes("w-full gap-3 flex-wrap"):
-            for d in devs:
+        ui.label("裝置總覽（點列切換下方詳細檢視）").classes("text-lg font-semibold")
+        # A real ui.table doesn't expose per-cell background/click easily, so
+        # this fakes one with a 4-col CSS grid: each row is a `contents` div
+        # (renders no box of its own, just lets its children join the grid)
+        # so the whole row is one click target while every cell still lands
+        # in its own grid column.
+        with ui.grid(columns="1.4fr 1fr 0.8fr 0.8fr").classes(
+            "w-full gap-0 rounded overflow-hidden border border-sky-600"
+        ):
+            for col in ("裝置名稱", "時間", "溫度", "濕度"):
+                ui.label(col).classes("bg-sky-600 text-white font-semibold text-sm px-3 py-2")
+            for i, d in enumerate(devs):
                 did = d["device_id"]
                 lt = latest_map.get(did, {})
                 thr = load_thresholds(did)
                 ls = d.get("last_seen")
-                online = bool(
-                    ls
-                    and (
-                        datetime.now(timezone.utc)
-                        - pd.to_datetime(ls, utc=True, format="ISO8601")
-                    ).total_seconds() < 300
-                )
+                seen = pd.to_datetime(ls, utc=True, format="ISO8601") if ls else None
+                online = bool(seen and (datetime.now(timezone.utc) - seen).total_seconds() < 300)
                 sel = did == state["device_id"]
-                card = ui.card().classes(
-                    "min-w-[190px] flex-1 items-start cursor-pointer "
-                    + ("border-2 border-sky-500" if sel else "border border-gray-200")
-                )
-                card.on("click", lambda did=did: select_device(did))
-                with card:
+                row_bg = "bg-sky-100" if sel else ("bg-sky-50" if i % 2 else "bg-white")
+                cell = f"{row_bg} px-3 py-2 text-sm border-t border-sky-100"
+                with ui.element("div").classes("contents cursor-pointer").on(
+                    "click", lambda did=did: select_device(did)
+                ):
                     ui.label(f"{'🟢' if online else '🔴'} {d.get('name') or did}").classes(
-                        "text-sm font-medium"
+                        f"{cell} font-medium"
                     )
-                    with ui.row().classes("gap-4 items-baseline"):
-                        for m in ("temperature", "humidity"):
-                            v = lt.get(m)
-                            if v is None:
-                                continue
-                            suffix = f" {UNIT[m]}" if UNIT[m] else ""
-                            colour = "text-red-600" if _out_of_band(v, thr.get(m)) else "text-sky-700"
-                            ui.label(f"{v}{suffix}").classes(f"text-lg font-bold {colour}")
+                    ui.label(seen.tz_convert(TZ).strftime("%H:%M:%S") if seen else "—").classes(
+                        f"{cell} text-gray-600"
+                    )
+                    for m in ("temperature", "humidity"):
+                        v = lt.get(m)
+                        colour = "text-red-600" if _out_of_band(v, thr.get(m)) else "text-sky-700"
+                        text = f"{v}{UNIT[m]}" if v is not None else "—"
+                        ui.label(text).classes(f"{cell} font-semibold {colour}")
 
     @ui.refreshable
     def status_section():
