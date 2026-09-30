@@ -1062,7 +1062,9 @@ def anomalies_page() -> None:
             ui.label("跨裝置混合列表,依時間排序,不受任何單一裝置選擇影響。").classes(
                 "text-sm text-gray-500"
             )
-            ui.toggle(list(METRIC_FILTERS.keys()), value=state["metric"], on_change=on_metric_change)
+            ui.toggle(
+                list(METRIC_FILTERS.keys()), value=state["metric"], on_change=on_metric_change
+            ).props("toggle-color=orange")  # matches the amber nav highlight above
             table_section()
 
     ui.timer(60.0, on_refresh_click)
