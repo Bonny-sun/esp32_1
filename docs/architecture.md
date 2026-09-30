@@ -561,3 +561,8 @@ informational, not real threshold breaches.
 * **2026-09-30 — 裝置總覽「時間」欄格式改為 %m-%d %H:%M.** `HH:MM:SS`
   alone didn't say which day, and read as more precise than the 30-min
   forecast cadence needs.
+* **2026-09-30 (later) — 異常警戒預設顯示當日異常.** `/anomalies`'s 日期
+  filter defaulted to 全部, dumping every day's alarms across every device
+  at once. Defaults to today (Asia/Taipei) instead, the same pattern
+  already used for 近期異常 and AI 預測's date pickers — falls back to
+  全部 via the existing `date_options` guard if today has no rows yet.
