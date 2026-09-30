@@ -613,3 +613,4 @@ informational, not real threshold breaches.
   select into 歷史趨勢 instead, since that's the only remaining section
   that still needs one — 裝置總覽's row click keeps it in sync either
   way.
+* **2026-09-30 (later) — 首頁「裝置總覽」更名為「即時資料總表」.**
