@@ -717,3 +717,7 @@ informational, not real threshold breaches.
   ewma+drift vs gbm) only needs the total table's fixed-window figure,
   so removed the caption rather than trying to reconcile the two
   windows.
+* **2026-09-30 (later) — AI 預測總表預設顯示溫度.** Changed
+  `state["summary_metric"]`'s default from 溫溼度 to 溫度; AI預測資料
+  查詢's own `fc_metric` default untouched, the two toggles stay
+  independent.
