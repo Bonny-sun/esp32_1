@@ -99,8 +99,9 @@ MQTT topic contract (`aquaponics/<site>/<device>/…`):
 Full pipeline deployed and running 24/7 across two boards.
 
 - **Dashboard pages**, all sharing one top nav bar (首頁/異常警戒/AI預測/
-  後台設定): `/` — 裝置總覽 (multi-board summary table), live values (red
-  when out of band), history charts (10-min bins, dashed 上限/下限 lines);
+  後台設定): `/` — 即時資料總表 (multi-board summary table), live values
+  (red when out of band), history charts (10-min bins, dashed 上限/下限
+  lines);
   `/forecast` — AI 預測, per-device forecast cards (champion `ewma+drift` vs
   challenger `gbm`) plus a 上次預測 vs 實際 eval table (date + model
   filters, defaults to today); `/anomalies` — 異常警戒, a fleet-wide alarm

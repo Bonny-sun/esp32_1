@@ -431,7 +431,7 @@ def main_page(device: str = "") -> None:
         if len(devs) < 2:
             return  # 只有一台時不用總覽
         latest_map = load_all_latest()
-        ui.label("裝置總覽（點列切換下方詳細檢視）").classes("text-lg font-semibold")
+        ui.label("即時資料總表（點列切換下方詳細檢視）").classes("text-lg font-semibold")
         # A real ui.table doesn't expose per-cell background/click easily, so
         # this fakes one with a 5-col CSS grid: each row is a `contents` div
         # (renders no box of its own, just lets its children join the grid)
