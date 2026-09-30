@@ -378,7 +378,15 @@ def nav_bar(current: str, on_refresh, device_id_getter=None) -> None:
             for label, path in NAV_LINKS:
                 is_current = path == current
                 btn = ui.button(label, on_click=go(path)).props("flat")
-                btn.classes("bg-white text-sky-700 font-bold" if is_current else "text-white")
+                if not is_current:
+                    btn.classes("text-white")
+                elif path == "/anomalies":
+                    # amber, matching 異常警戒's old standalone page header —
+                    # a visual "this is the alert page" cue the generic
+                    # white/sky highlight below doesn't carry.
+                    btn.classes("bg-amber-500 text-white font-bold")
+                else:
+                    btn.classes("bg-white text-sky-700 font-bold")
         ui.button(icon="refresh", on_click=on_refresh).props("flat round color=white")
 
 
