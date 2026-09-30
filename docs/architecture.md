@@ -637,3 +637,13 @@ informational, not real threshold breaches.
   bright/glaring. Darkened both to `amber-600` / `orange-9` — same hue,
   less saturated-looking, still clearly distinct from the sky-blue theme
   everywhere else.
+* **2026-09-30 (later) — AI 預測頁重整.** Removed the standalone
+  "檢視裝置" card and the AI 預測 card's 2x2 champion/challenger value
+  cards + "模型:...產生於..." caption line — 上次預測 vs 實際 is the
+  section's real point, and the value cards had become one more thing to
+  scroll past (same reasoning as 裝置總覽 replacing the old per-device
+  detail cards). Moved device selection into the 日期/模型 filter row
+  instead (same layout pattern as `/anomalies`'s 裝置/日期 filters), and
+  gave the eval table's header row a green background via Quasar
+  `headerClasses`, the same technique already used on `/anomalies`'s
+  table.

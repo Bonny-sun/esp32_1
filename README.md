@@ -102,8 +102,8 @@ Full pipeline deployed and running 24/7 across two boards.
   後台設定): `/` — 即時資料總表 (multi-board summary table), live values
   (red when out of band), history charts (10-min bins, dashed 上限/下限
   lines);
-  `/forecast` — AI 預測, per-device forecast cards (champion `ewma+drift` vs
-  challenger `gbm`) plus a 上次預測 vs 實際 eval table (date + model
+  `/forecast` — AI 預測, a per-device 上次預測 vs 實際 eval table for both
+  models (champion `ewma+drift` vs challenger `gbm`; device + date + model
   filters, defaults to today); `/anomalies` — 異常警戒, a fleet-wide alarm
   list across every device (device + date + metric filters, defaults to
   today), its own page rather than a section so it reads as a
