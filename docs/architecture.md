@@ -626,3 +626,9 @@ informational, not real threshold breaches.
   capped to one push per device/metric/hour by
   `aqua_check_thresholds()`'s own hourly bucketing — verified against the
   worker code before changing the copy.
+* **2026-09-30 (later) — 異常警戒表格標題列加上底色.** Plain `ui.table`
+  rendered a white header, blending into the card behind it. Set each
+  column's Quasar `headerClasses` to `bg-amber-500 text-white` — a
+  genuine QTable column prop, not a NiceGUI one, and the only way to
+  color a plain ui.table's header at all — matching this page's existing
+  orange theme (nav highlight, toggle-color).
