@@ -95,8 +95,15 @@ def line_push_paused(device_id: str) -> bool:
     """Per-device override (aqua_devices.line_push_paused) if set, else the
     global kill switch flipped from the dashboard (aqua_settings). NULL on
     the device row means "no override, follow the global default".
-    Fails open to "not paused" on any DB hiccup — a broken settings read
-    should never silently swallow a real threshold alert."""
+
+    The device-override check and the global check are wrapped
+    separately: a failure reading the override (e.g. a production DB
+    that hasn't run sql/08_notify_pause_device.sql yet, so the column
+    doesn't exist) must fall back to the global check, not skip it — an
+    exception here must never make the user's global on/off switch
+    silently stop applying. Fails open to "not paused" only if BOTH
+    checks error out, so a broken settings read still never silently
+    swallows a real threshold alert."""
     try:
         dev_rows = (
             sb.table("aqua_devices").select("line_push_paused")
@@ -104,6 +111,9 @@ def line_push_paused(device_id: str) -> bool:
         )
         if dev_rows and dev_rows[0]["line_push_paused"] is not None:
             return bool(dev_rows[0]["line_push_paused"])
+    except Exception as exc:
+        print(f"[line] device override check failed (falling back to global): {exc}", flush=True)
+    try:
         rows = (
             sb.table("aqua_settings").select("value")
             .eq("key", "line_push_paused").execute().data
