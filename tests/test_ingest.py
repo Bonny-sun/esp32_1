@@ -108,7 +108,7 @@ def _run_notify(monkeypatch, fake_client, rows):
     pushed = []
     monkeypatch.setattr(ingest, "sb", client)
     monkeypatch.setattr(ingest, "LINE_CHANNEL_TOKEN", "tok")
-    monkeypatch.setattr(ingest, "push_line", pushed.append)
+    monkeypatch.setattr(ingest, "push_line", lambda text, device_id: pushed.append(text))
     ingest.notify_pending_threshold_alerts("esp32-aqua-01")
     return client, pushed
 
@@ -150,8 +150,33 @@ def test_notify_is_noop_without_line_token(monkeypatch, fake_client):
 
 # ---- push_line / kill switch ------------------------------------------
 def test_line_push_paused_reads_setting(monkeypatch, fake_client):
-    monkeypatch.setattr(ingest, "sb", fake_client(lambda q: [{"value": True}]))
-    assert ingest.line_push_paused() is True
+    def handler(q):
+        if q.table == "aqua_devices":
+            return [{"line_push_paused": None}]  # no per-device override
+        return [{"value": True}]
+
+    monkeypatch.setattr(ingest, "sb", fake_client(handler))
+    assert ingest.line_push_paused("esp32-aqua-01") is True
+
+
+def test_line_push_paused_device_override_forces_pause(monkeypatch, fake_client):
+    def handler(q):
+        if q.table == "aqua_devices":
+            return [{"line_push_paused": True}]
+        return [{"value": False}]  # global says not paused; override wins
+
+    monkeypatch.setattr(ingest, "sb", fake_client(handler))
+    assert ingest.line_push_paused("esp32-aqua-01") is True
+
+
+def test_line_push_paused_device_override_forces_on(monkeypatch, fake_client):
+    def handler(q):
+        if q.table == "aqua_devices":
+            return [{"line_push_paused": False}]
+        return [{"value": True}]  # global paused; override forces this device on
+
+    monkeypatch.setattr(ingest, "sb", fake_client(handler))
+    assert ingest.line_push_paused("esp32-aqua-01") is False
 
 
 def test_line_push_paused_fails_open_on_db_error(monkeypatch):
@@ -160,15 +185,15 @@ def test_line_push_paused_fails_open_on_db_error(monkeypatch):
             raise RuntimeError("db down")
 
     monkeypatch.setattr(ingest, "sb", Boom())
-    assert ingest.line_push_paused() is False  # never swallow a real alert
+    assert ingest.line_push_paused("esp32-aqua-01") is False  # never swallow a real alert
 
 
 def test_push_line_skipped_when_paused(monkeypatch):
     posts = []
     monkeypatch.setattr(ingest, "LINE_CHANNEL_TOKEN", "tok")
-    monkeypatch.setattr(ingest, "line_push_paused", lambda: True)
+    monkeypatch.setattr(ingest, "line_push_paused", lambda _device_id: True)
     monkeypatch.setattr(ingest.requests, "post", lambda *a, **k: posts.append(a))
-    ingest.push_line("hi")
+    ingest.push_line("hi", "esp32-aqua-01")
     assert posts == []
 
 
@@ -180,10 +205,10 @@ def test_push_line_posts_broadcast_with_bearer_token(monkeypatch):
         text = ""
 
     monkeypatch.setattr(ingest, "LINE_CHANNEL_TOKEN", "tok")
-    monkeypatch.setattr(ingest, "line_push_paused", lambda: False)
+    monkeypatch.setattr(ingest, "line_push_paused", lambda _device_id: False)
     monkeypatch.setattr(ingest.requests, "post", lambda url, **k: calls.append((url, k)) or Resp())
 
-    ingest.push_line("hello")
+    ingest.push_line("hello", "esp32-aqua-01")
 
     (url, kw), = calls
     assert url == ingest.LINE_BROADCAST_URL
@@ -196,6 +221,6 @@ def test_push_line_swallows_network_errors(monkeypatch):
         raise ConnectionError("offline")
 
     monkeypatch.setattr(ingest, "LINE_CHANNEL_TOKEN", "tok")
-    monkeypatch.setattr(ingest, "line_push_paused", lambda: False)
+    monkeypatch.setattr(ingest, "line_push_paused", lambda _device_id: False)
     monkeypatch.setattr(ingest.requests, "post", boom)
-    ingest.push_line("hello")  # must not raise — ingest keeps running
+    ingest.push_line("hello", "esp32-aqua-01")  # must not raise — ingest keeps running
