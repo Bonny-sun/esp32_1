@@ -660,3 +660,18 @@ informational, not real threshold breaches.
 * **2026-09-30 (later) — AI預測頁模型說明改精簡,前方加上*.** Shortened
   the two model explanations from two sentences each to one line each,
   kept the same core facts, each now prefixed with `*`.
+* **2026-09-30 (later) — AI 預測頁新增「AI 預測總表」跨裝置摘要.** Added
+  a fleet-wide table above the existing per-device section: one row per
+  (device, model), showing that combo's single latest forecast/actual
+  pair plus its aggregate 平均誤差/命中率 — the same computation already
+  done per (metric, model) in forecast_section's caption loop, rolled up
+  across every device instead of one device's own detail table. No
+  device selector, matching `/anomalies`'s fleet-wide table — the point
+  is to read across devices at a glance. The original "AI 預測" card
+  (per-device drill-down with its own 裝置/日期/模型 filters) renamed to
+  "AI預測資料查詢" to distinguish it from the new summary above. Also
+  unified both tables' headers and both toggles onto Quasar's own
+  `bg-green` / `toggle-color=green` — the earlier `bg-green-600`
+  (Tailwind) on one table's header didn't actually match `toggle-
+  color=green`'s rendered shade, so the two greens on the page looked
+  slightly different; both now reference the same Quasar color.
