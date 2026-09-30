@@ -618,3 +618,11 @@ informational, not real threshold breaches.
   every 6 hours (00/06/12/18); tightened to every 3 (00/03/06/.../21),
   still anchored to midnight so ticks land on the same clock times
   regardless of when the 24h window happens to start.
+* **2026-09-30 (later) — 異常警戒說明文字更新為實際運作方式.** Old copy
+  ("跨裝置混合列表,依時間排序,不受任何單一裝置選擇影響") only described
+  the table's own sort/filter behavior. New copy explains the full
+  picture: filtered by device + date, and that a breach also pushes a
+  LINE broadcast (`worker/ingest.py`'s `notify_pending_threshold_alerts`),
+  capped to one push per device/metric/hour by
+  `aqua_check_thresholds()`'s own hourly bucketing — verified against the
+  worker code before changing the copy.
