@@ -705,3 +705,7 @@ informational, not real threshold breaches.
   band check, 統計偏離 is `baseline.py`'s `detect_univariate()` rolling
   z-score deviation (can fire even when the value is within the
   configured band).
+* **2026-09-30 (later) — 異常警戒說明文字改格式.** Merged the previously
+  separate "每個整點最多一筆" note and the 警示類型 explanation into one
+  opening line followed by two `*`-prefixed bullets, matching AI 預測頁's
+  ewma+drift/gbm model explanations' layout.
