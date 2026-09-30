@@ -709,3 +709,11 @@ informational, not real threshold breaches.
   separate "每個整點最多一筆" note and the 警示類型 explanation into one
   opening line followed by two `*`-prefixed bullets, matching AI 預測頁's
   ewma+drift/gbm model explanations' layout.
+* **2026-09-30 (later) — AI預測資料查詢隱藏下方命中率說明文字.** Its
+  per-(metric, model) caption's 命中率/平均誤差 was scoped to whatever
+  date filter is currently selected there, reading differently from AI
+  預測總表's hit rate above (a fixed, unfiltered window) — the two
+  numbers not matching was confusing. User's actual goal (comparing
+  ewma+drift vs gbm) only needs the total table's fixed-window figure,
+  so removed the caption rather than trying to reconcile the two
+  windows.
