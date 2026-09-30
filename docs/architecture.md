@@ -584,3 +584,15 @@ informational, not real threshold breaches.
   margin canceling the header's `px-4`/`py-2` padding on just this label
   so the darker background bleeds flush to the header's top/bottom/left
   edges instead of floating as a rounded chip.
+* **2026-09-30 (later) — negative-margin bleed swapped for per-child
+  padding.** The math on the negative-margin fix above canceled exactly
+  and read clean in this session's own Playwright screenshots, but a
+  user screenshot from the live site showed a thin lighter seam around
+  the block anyway — plausibly sub-pixel rounding on some browser's
+  zoom/DPI setting, a known fragility of negative-margin bleeds in flex
+  layouts. Removed the header's own padding entirely (`p-0`) and gave
+  each child its own instead: the brand block is `self-stretch` so its
+  box always exactly fills the row's height, nav buttons get `my-2` in
+  place of the header's old `py-2`, the refresh button gets `mr-2` in
+  place of `px-4`. Nothing lines up via cancellation anymore, so there's
+  no seam left to round away.
