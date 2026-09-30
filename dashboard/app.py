@@ -414,10 +414,6 @@ def main_page(device: str = "") -> None:
     state = {
         "device_id": device if device in ids else ids[0],
         "range_label": "24 小時",
-        "anom_metric": "溫溼度",
-        # default to today (Asia/Taipei); falls back to 全部 if today has no
-        # rows yet (see the date_options guard in anomalies_section)
-        "anom_date": (datetime.now(timezone.utc) + timedelta(hours=8)).strftime("%Y-%m-%d"),
     }
 
     def device() -> dict:
@@ -670,71 +666,12 @@ def main_page(device: str = "") -> None:
                 }
             ).classes("w-full h-48")
 
-    @ui.refreshable
-    def anomalies_section():
-        an = load_anomalies(state["device_id"])
-        wanted = METRIC_FILTERS[state["anom_metric"]]
-        if not an.empty:
-            an = an[an["metric"].isin(wanted)]
-        if not an.empty:
-            # 一小時一筆:同一(項目, 方法, 整點)只保留最新那筆
-            an = an.assign(_hour=an["ts"].dt.floor("h"))
-            an = (
-                an.sort_values("ts", ascending=False)
-                .drop_duplicates(subset=["metric", "method", "_hour"])
-            )
-
-        # 日期篩選:選項跟著目前(項目篩選後)實際有資料的日期走
-        dates = sorted(an["ts"].dt.strftime("%Y-%m-%d").unique(), reverse=True) if not an.empty else []
-        date_options = ["全部"] + dates
-        if state["anom_date"] not in date_options:
-            state["anom_date"] = "全部"
-
-        def on_date_change(e):
-            state["anom_date"] = e.value
-            anomalies_section.refresh()
-
-        ui.select(date_options, value=state["anom_date"], label="日期", on_change=on_date_change).classes(
-            "w-40"
-        )
-        ui.label("每個整點最多一筆").classes("text-xs text-gray-400")
-        if state["anom_date"] != "全部" and not an.empty:
-            an = an[an["ts"].dt.strftime("%Y-%m-%d") == state["anom_date"]]
-
-        if an.empty:
-            with ui.row().classes("items-center gap-2 text-green-600"):
-                ui.icon("check_circle")
-                ui.label("目前沒有異常紀錄。")
-            return
-        method_label = {
-            "threshold": "超出範圍",
-            "rolling_zscore": "統計偏離",
-            "isolation_forest": "多變量偵測",
-        }
-        show = an[["ts", "device_id", "metric", "value", "method", "note"]].copy()
-        show["ts"] = show["ts"].dt.strftime("%m-%d %H:%M")
-        show["metric"] = show["metric"].map(lambda x: LABEL.get(x, x))
-        show["method"] = show["method"].map(lambda x: method_label.get(x, x))
-        columns = [
-            {"name": "ts", "label": "時間", "field": "ts", "align": "left"},
-            {"name": "device_id", "label": "裝置", "field": "device_id", "align": "left"},
-            {"name": "metric", "label": "項目", "field": "metric", "align": "left"},
-            {"name": "value", "label": "數值", "field": "value", "align": "left"},
-            {"name": "method", "label": "方法", "field": "method", "align": "left"},
-            {"name": "note", "label": "說明", "field": "note", "align": "left"},
-        ]
-        # ts alone can repeat across rows (two metrics anomalous in the same
-        # minute) — row_key needs a value unique per row.
-        rows = show.reset_index(drop=True).reset_index(names="_row_id").to_dict("records")
-        ui.table(columns=columns, rows=rows, row_key="_row_id").classes("w-full")
-
     # ------------------------------------------------------------- 事件處理
     def refresh_all():
         overview_section.refresh()
         status_section.refresh()
         metrics_section.refresh()
         history_section.refresh()
-        anomalies_section.refresh()
 
     def on_device_change(e):
         state["device_id"] = e.value
@@ -743,10 +680,6 @@ def main_page(device: str = "") -> None:
     def on_range_change(e):
         state["range_label"] = e.value
         history_section.refresh()
-
-    def on_anom_metric_change(e):
-        state["anom_metric"] = e.value
-        anomalies_section.refresh()
 
     def on_refresh_click():
         clear_cache()
@@ -770,15 +703,6 @@ def main_page(device: str = "") -> None:
             ui.label("歷史趨勢").classes("text-lg font-semibold")
             ui.toggle(list(RANGE_HOURS.keys()), value=state["range_label"], on_change=on_range_change)
             history_section()
-
-        with ui.card().classes(SECTION_CARD_CLASSES).props("flat"):
-            ui.label("近期異常").classes("text-lg font-semibold")
-            ui.toggle(
-                list(METRIC_FILTERS.keys()),
-                value=state["anom_metric"],
-                on_change=on_anom_metric_change,
-            )
-            anomalies_section()
 
     # 每 60 秒自動重新整理一次(對齊裝置上傳週期)。
     ui.timer(60.0, on_refresh_click)
@@ -959,11 +883,12 @@ def forecast_page(device: str = "") -> None:
 @ui.page("/anomalies", title="🚨 AIoT智慧物聯系統 · 異常警戒")
 def anomalies_page() -> None:
     """Fleet-wide alarm list: every device mixed into one table, sorted by
-    time, independent of any single-device selection — the triage layer
-    that sits alongside the main page's per-device 近期異常 drill-down
-    (same idea as Grafana/Zabbix separating Alerting from a host's own
-    dashboard). Its own page/route rather than a section on the main page
-    so it reads as a first-class destination, not something scrolled past."""
+    time, independent of any single-device selection (same idea as
+    Grafana/Zabbix separating Alerting from a host's own dashboard). Its
+    own page/route rather than a section on the main page so it reads as
+    a first-class destination, not something scrolled past — 首頁's own
+    per-device 近期異常 drill-down was removed once this covered the same
+    ground for every device at once."""
     ui.colors(primary="#0284c7", secondary="#0891b2", accent="#22c55e", positive="#22c55e")
 
     devices = load_devices()
@@ -1196,7 +1121,7 @@ def admin_page(device: str = "") -> None:
             ui.button("儲存", on_click=do_save)
         ui.label(
             "雲端每分鐘檢查一次(aqua_check_thresholds),持續超標最多每小時記一筆,"
-            "顯示在主頁「近期異常」的「超出範圍」。"
+            "顯示在「異常警戒」的「超出範圍」。"
         ).classes("text-xs text-gray-400 mt-1")
 
     def on_device_change(e):
