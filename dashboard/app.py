@@ -395,12 +395,18 @@ def nav_bar(current: str, on_refresh, device_id_getter=None) -> None:
     # alone left a 1px seam of the lighter header color on some browsers'
     # zoom/DPI rounding.
     with ui.header().classes("items-center justify-between bg-sky-600 text-white p-0"):
-        with ui.row().classes("items-center gap-1 pr-2"):
-            with ui.row().classes("items-center self-stretch bg-sky-800 px-4 gap-0"):
+        # flex-nowrap + overflow-x-auto: on a narrow phone the brand block
+        # plus 4 nav buttons don't all fit on one line — the previous plain
+        # ui.row() let them wrap to a second line instead, which looked
+        # broken. Scrolling horizontally (shrink-0 on every child so
+        # buttons keep their normal width instead of getting squeezed)
+        # keeps the bar a single row on any width.
+        with ui.row().classes("items-center gap-1 pr-2 flex-nowrap overflow-x-auto"):
+            with ui.row().classes("items-center self-stretch bg-sky-800 px-4 gap-0 shrink-0"):
                 ui.label("💧 AIoT智慧物聯系統").classes("text-lg font-semibold whitespace-nowrap")
             for label, path in NAV_LINKS:
                 is_current = path == current
-                btn = ui.button(label, on_click=go(path)).props("flat").classes("my-2")
+                btn = ui.button(label, on_click=go(path)).props("flat").classes("my-2 shrink-0")
                 if not is_current:
                     btn.classes("text-white")
                 elif path == "/anomalies":
@@ -411,7 +417,7 @@ def nav_bar(current: str, on_refresh, device_id_getter=None) -> None:
                 else:
                     btn.classes("bg-white text-sky-700 font-bold")
         ui.button(icon="refresh", on_click=on_refresh).props("flat round color=white").classes(
-            "mr-2"
+            "mr-2 shrink-0"
         )
 
 
