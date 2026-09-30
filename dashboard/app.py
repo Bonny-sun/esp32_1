@@ -674,6 +674,7 @@ def forecast_page(device: str = "") -> None:
     ids = [d["device_id"] for d in devices]
     state = {
         "device_id": device if device in ids else ids[0],
+        "summary_metric": "溫溼度",
         "fc_metric": "溫溼度",
         # default to today (Asia/Taipei); falls back to 全部 if today has no
         # rows yet (see the date_options guard below). load_forecast_eval
@@ -682,6 +683,63 @@ def forecast_page(device: str = "") -> None:
         "fc_date": (datetime.now(timezone.utc) + timedelta(hours=8)).strftime("%Y-%m-%d"),
         "fc_model": "全部",
     }
+
+    @ui.refreshable
+    def summary_section():
+        """Fleet-wide, one row per (device, model): the single latest
+        forecast+actual pair for the selected metric(s), plus that combo's
+        aggregate 平均誤差/命中率 — the same stats already computed per
+        (metric, model) in forecast_section's caption loop below, just
+        rolled up across every device instead of one device's own detail
+        table. Device-independent by design (no 裝置 selector here),
+        mirroring /anomalies's fleet-wide table."""
+        wanted = METRIC_FILTERS[state["summary_metric"]]
+        wanted_labels = [LABEL.get(k, k) for k in wanted]
+        rows = []
+        for d in devices:
+            did = d["device_id"]
+            ev = load_forecast_eval(did)
+            if ev.empty:
+                continue
+            ev = ev[ev["metric"].isin(wanted_labels)]
+            if ev.empty:
+                continue
+            # ev is newest-target-first already (load_forecast_eval builds
+            # it by iterating aqua_forecasts ordered ts_target desc), so
+            # each model's first row here is its latest.
+            for model_name in sorted(ev["model"].unique()):
+                g = ev[ev["model"] == model_name]
+                latest = g.iloc[0]
+                rows.append(
+                    {
+                        "device_id": d.get("name") or did,
+                        "ts_target": latest["ts_target"],
+                        "model": model_name,
+                        "yhat": latest["yhat"],
+                        "actual": latest["actual"],
+                        "err_avg": round(float(g["err"].mean()), 2),
+                        "hit": latest["hit"],
+                        "hit_rate": f"{(g['hit'] == '✓').mean() * 100:.0f}%",
+                    }
+                )
+        if not rows:
+            ui.label("尚無預測資料。").classes("text-gray-500")
+            return
+        cols = [
+            {"name": n, "label": lb, "field": n, "align": "left", "headerClasses": "bg-green text-white"}
+            for n, lb in [
+                ("device_id", "裝置名稱"),
+                ("ts_target", "目標時間"),
+                ("model", "模型"),
+                ("yhat", "預測"),
+                ("actual", "實際"),
+                ("err_avg", "平均誤差"),
+                ("hit", "命中"),
+                ("hit_rate", "命中率"),
+            ]
+        ]
+        table_rows = [{**r, "_row_id": i} for i, r in enumerate(rows)]
+        ui.table(columns=cols, rows=table_rows, row_key="_row_id").classes("w-full")
 
     @ui.refreshable
     def forecast_section():
@@ -750,7 +808,7 @@ def forecast_page(device: str = "") -> None:
         # headerClasses is a genuine Quasar QTable column prop (not a
         # NiceGUI one) — see the same pattern on /anomalies's table.
         cols = [
-            {"name": n, "label": lb, "field": n, "align": "left", "headerClasses": "bg-green-600 text-white"}
+            {"name": n, "label": lb, "field": n, "align": "left", "headerClasses": "bg-green text-white"}
             for n, lb in [
                 ("ts_target", "目標時間"),
                 ("metric", "項目"),
@@ -779,6 +837,10 @@ def forecast_page(device: str = "") -> None:
                         f"平均誤差 {g['err'].mean():.2f}"
                     ).classes("text-xs text-gray-400")
 
+    def on_summary_metric_change(e):
+        state["summary_metric"] = e.value
+        summary_section.refresh()
+
     def on_device_change(e):
         state["device_id"] = e.value
         forecast_section.refresh()
@@ -789,13 +851,24 @@ def forecast_page(device: str = "") -> None:
 
     def on_refresh_click():
         clear_cache()
+        summary_section.refresh()
         forecast_section.refresh()
 
     nav_bar("/forecast", on_refresh_click, lambda: state["device_id"])
 
     with ui.column().classes("w-full max-w-3xl mx-auto p-4 gap-5"):
         with ui.card().classes(SECTION_CARD_CLASSES).props("flat"):
-            ui.label("AI 預測").classes("text-lg font-semibold")
+            ui.label("AI 預測總表").classes("text-lg font-semibold")
+            ui.label("依裝置、溫/溼度顯示最新一筆資料。").classes("text-sm text-gray-500")
+            ui.toggle(
+                list(METRIC_FILTERS.keys()),
+                value=state["summary_metric"],
+                on_change=on_summary_metric_change,
+            ).props("toggle-color=green")
+            summary_section()
+
+        with ui.card().classes(SECTION_CARD_CLASSES).props("flat"):
+            ui.label("AI預測資料查詢").classes("text-lg font-semibold")
             ui.label(
                 "依裝置、日期、模型顯示AI預測值(依需求預測30分後的資料)，"
                 "並與實際量測值做比較，評估誤差及命中率。"
