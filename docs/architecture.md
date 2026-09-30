@@ -566,3 +566,10 @@ informational, not real threshold breaches.
   at once. Defaults to today (Asia/Taipei) instead, the same pattern
   already used for 近期異常 and AI 預測's date pickers — falls back to
   全部 via the existing `date_options` guard if today has no rows yet.
+* **2026-09-30 (later) — 異常警戒 nav 選中時改回橘色.** The nav bar
+  restructure (2026-09-29) put 異常警戒 through the same generic
+  white/sky-700 "current page" highlight as the other three links,
+  losing the amber cue its old standalone page header (`bg-amber-700`)
+  used to mark it as the alert page. Gives just this one link's active
+  state `bg-amber-500` instead; the other three keep the generic
+  highlight.
