@@ -603,3 +603,13 @@ informational, not real threshold breaches.
   filters, the card in the layout) along with its `refresh_all` wiring.
   Updated the admin page's threshold-save note and `/anomalies`'s
   docstring, which both still pointed at the now-removed section.
+* **2026-09-30 (later) — 首頁移除詳細檢視裝置卡片,裝置選擇改放到歷史
+  趨勢.** 裝置總覽 already showed each device's online status, last-seen
+  time, and live temperature/humidity in one table. The "詳細檢視裝置"
+  card below it (a device select + a duplicate online/last-seen line +
+  duplicate metric cards) had become pure repetition of the same three
+  data points. Removed it along with the now-unused
+  `status_section`/`metrics_section`/`load_latest`, and moved its device
+  select into 歷史趨勢 instead, since that's the only remaining section
+  that still needs one — 裝置總覽's row click keeps it in sync either
+  way.
