@@ -578,3 +578,9 @@ informational, not real threshold breaches.
   color for its selected state, standing out against the amber nav
   highlight added above. `toggle-color=orange` on just this instance; the
   identically-shaped toggle on 首頁's 近期異常 is untouched.
+* **2026-09-30 (later) — 導覽列網站名稱區塊底色調深.** The brand label sat
+  directly on the header's own `bg-sky-600`, no visual separation from the
+  nav buttons beside it. Gave it its own `bg-sky-800` block, with negative
+  margin canceling the header's `px-4`/`py-2` padding on just this label
+  so the darker background bleeds flush to the header's top/bottom/left
+  edges instead of floating as a rounded chip.
