@@ -468,7 +468,7 @@ def main_page(device: str = "") -> None:
                             f"{cell} font-medium"
                         )
                         ui.label(
-                            reading_time.tz_convert(TZ).strftime("%H:%M:%S")
+                            reading_time.tz_convert(TZ).strftime("%m-%d %H:%M")
                             if reading_time
                             else "—"
                         ).classes(f"{cell} text-gray-600")
