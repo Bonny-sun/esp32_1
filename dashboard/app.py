@@ -372,17 +372,18 @@ def nav_bar(current: str, on_refresh, device_id_getter=None) -> None:
 
         return _go
 
-    with ui.header().classes("items-center justify-between bg-sky-600 text-white px-4 py-2"):
-        with ui.row().classes("items-center gap-1"):
-            # Negative margin cancels the header's own px-4/py-2 padding on
-            # this label only, so its darker background bleeds flush to the
-            # header's top/bottom/left edges instead of floating as a chip.
-            ui.label("💧 AIoT智慧物聯系統").classes(
-                "text-lg font-semibold -my-2 -ml-4 py-2 pl-4 pr-3 mr-3 bg-sky-800"
-            )
+    # p-0 header: padding lives on each child instead of the header itself,
+    # so the brand block's own background covers its own box edge-to-edge
+    # with nothing to cancel out — a negative-margin "bleed" on the label
+    # alone left a 1px seam of the lighter header color on some browsers'
+    # zoom/DPI rounding.
+    with ui.header().classes("items-center justify-between bg-sky-600 text-white p-0"):
+        with ui.row().classes("items-center gap-1 pr-2"):
+            with ui.row().classes("items-center self-stretch bg-sky-800 px-4 gap-0"):
+                ui.label("💧 AIoT智慧物聯系統").classes("text-lg font-semibold whitespace-nowrap")
             for label, path in NAV_LINKS:
                 is_current = path == current
-                btn = ui.button(label, on_click=go(path)).props("flat")
+                btn = ui.button(label, on_click=go(path)).props("flat").classes("my-2")
                 if not is_current:
                     btn.classes("text-white")
                 elif path == "/anomalies":
@@ -392,7 +393,9 @@ def nav_bar(current: str, on_refresh, device_id_getter=None) -> None:
                     btn.classes("bg-amber-500 text-white font-bold")
                 else:
                     btn.classes("bg-white text-sky-700 font-bold")
-        ui.button(icon="refresh", on_click=on_refresh).props("flat round color=white")
+        ui.button(icon="refresh", on_click=on_refresh).props("flat round color=white").classes(
+            "mr-2"
+        )
 
 
 @ui.page("/", title="💧 AIoT智慧物聯系統 · 首頁")
