@@ -1105,15 +1105,15 @@ def admin_page(device: str = "") -> None:
         paused = load_global_line_paused()
 
         def on_toggle(e):
-            set_global_line_paused(e.value)
+            set_global_line_paused(not e.value)
             ui.notify(
-                "已暫停 LINE 推播（全域）" if e.value else "已恢復 LINE 推播（全域）",
-                type="warning" if e.value else "positive",
+                "已開啟 LINE 推播（全域）" if e.value else "已關閉 LINE 推播（全域）",
+                type="positive" if e.value else "warning",
             )
             notify_section.refresh()
 
         with ui.row().classes("items-center gap-2"):
-            ui.switch("暫停 LINE 推播（全域預設）", value=paused, on_change=on_toggle)
+            ui.switch("開啟 LINE 推播（全域預設）", value=not paused, on_change=on_toggle)
             if paused:
                 ui.icon("notifications_off").classes("text-amber-500")
         ui.label("關閉後,異常仍會被記錄(不會累積成之後的洗版),只是不會真的推播到 LINE。").classes(
@@ -1183,9 +1183,6 @@ def admin_page(device: str = "") -> None:
                         ui.notify(f"送出失敗：{exc}", type="negative")
 
                 ui.button("套用", on_click=apply).classes("mt-1")
-                ui.label("OLED 寵物表情的門檻(與雲端「警戒設定」告警無關)。").classes(
-                    "text-xs text-gray-400"
-                )
 
     @ui.refreshable
     def alert_section():
@@ -1265,7 +1262,10 @@ def admin_page(device: str = "") -> None:
             notify_section()
 
         with ui.card().classes(SECTION_CARD_CLASSES).props("flat"):
-            ui.label("顯示設定").classes("text-lg font-semibold")
+            ui.label("裝置面板顯示設定").classes("text-lg font-semibold")
+            ui.label("面板可選擇不同寵物，並設定流汗、發抖門檻。").classes(
+                "text-xs text-gray-400 mb-1"
+            )
             display_section()
 
     def on_refresh_click():
