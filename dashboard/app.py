@@ -865,19 +865,6 @@ def forecast_page(device: str = "") -> None:
         # same target time each run) — row_key needs a value unique per row.
         rows = ev.reset_index(drop=True).reset_index(names="_row_id").to_dict("records")
         ui.table(columns=cols, rows=rows, row_key="_row_id").classes("w-full")
-        with ui.column().classes("gap-0.5 mt-1"):
-            for m in METRICS:
-                label = LABEL.get(m, m)
-                g_metric = ev[ev["metric"] == label]
-                if g_metric.empty:
-                    continue
-                for model_name in sorted(g_metric["model"].unique()):
-                    g = g_metric[g_metric["model"] == model_name]
-                    ui.label(
-                        f"{label} · {model_name} · 近 {len(g)} 筆 · "
-                        f"命中率 {(g['hit'] == '✓').mean() * 100:.0f}% · "
-                        f"平均誤差 {g['err'].mean():.2f}"
-                    ).classes("text-xs text-gray-400")
 
     def on_summary_metric_change(e):
         state["summary_metric"] = e.value
