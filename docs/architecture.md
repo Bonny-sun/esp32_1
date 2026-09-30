@@ -558,3 +558,6 @@ informational, not real threshold breaches.
   wrapping across 3 lines, so the grid got a fixed `min-w` and its
   wrapper scrolls horizontally on narrow viewports instead of shrinking
   columns below a legible width.
+* **2026-09-30 — 裝置總覽「時間」欄格式改為 %m-%d %H:%M.** `HH:MM:SS`
+  alone didn't say which day, and read as more precise than the 30-min
+  forecast cadence needs.
