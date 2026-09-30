@@ -647,3 +647,13 @@ informational, not real threshold breaches.
   gave the eval table's header row a green background via Quasar
   `headerClasses`, the same technique already used on `/anomalies`'s
   table.
+* **2026-09-30 (later) — AI預測頁補說明文字、切換鈕改綠色、加兩種模型
+  說明.** Added a description line under the AI 預測 heading (依裝置、
+  日期、模型顯示 AI 預測值(30分後)，並與實際量測值比較，評估誤差及命中
+  率), changed the 溫度/濕度/溫溼度 toggle's selected color to green to
+  match the table header, dropped the now-redundant "上次預測 vs 實際"
+  label, and added an explanation of the two models above the table —
+  matched against `analysis/baseline.py`'s actual implementation (EWMA +
+  linear drift extrapolation vs. a gradient-boosted tree trained on 14
+  days of history with time-of-day features), not written from scratch
+  as marketing copy.
