@@ -675,3 +675,17 @@ informational, not real threshold breaches.
   (Tailwind) on one table's header didn't actually match `toggle-
   color=green`'s rendered shade, so the two greens on the page looked
   slightly different; both now reference the same Quasar color.
+* **2026-09-30 (later) — AI 預測總表加上模型選擇、項目欄位.** Added a
+  「模型」select (全部/ewma+drift/gbm, options built dynamically from the
+  actual cross-device data) next to the metric toggle, matching AI預測
+  資料查詢's own model filter. Added a 項目 (氣溫/濕度) column — the
+  summary previously aggregated by (device, model) alone, which mixed
+  both metrics' latest records into one row with no way to tell which
+  metric it was; now aggregates by (device, metric, model), so 溫溼度
+  correctly shows one row per metric per device per model. Also updated
+  both cards' description text (AI 預測總表's now matches the fuller
+  依裝置、溫/溼度、模型...評估誤差及命中率 wording; AI預測資料查詢's
+  shortened to 依裝置、日期、模型查詢AI預測資料), and extended the
+  ewma+drift explanation with 當環境變異大能快速抓到新趨勢 — its short
+  lookback window + drift extrapolation reacts to a sudden trend change
+  faster than gbm's longer training window.
