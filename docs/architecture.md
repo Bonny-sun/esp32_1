@@ -721,3 +721,5 @@ informational, not real threshold breaches.
   `state["summary_metric"]`'s default from 溫溼度 to 溫度; AI預測資料
   查詢's own `fc_metric` default untouched, the two toggles stay
   independent.
+* **2026-09-30 (later) — 後台設定區塊順序改成警戒設定、推播設定、顯示
+  設定.** Was 推播設定/顯示設定/警戒設定.
