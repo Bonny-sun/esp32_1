@@ -632,3 +632,8 @@ informational, not real threshold breaches.
   genuine QTable column prop, not a NiceGUI one, and the only way to
   color a plain ui.table's header at all — matching this page's existing
   orange theme (nav highlight, toggle-color).
+* **2026-09-30 (later) — 異常警戒的橘色調降低彩度.** `bg-amber-500` (nav
+  highlight, table header) and `toggle-color=orange` read as too
+  bright/glaring. Darkened both to `amber-600` / `orange-9` — same hue,
+  less saturated-looking, still clearly distinct from the sky-blue theme
+  everywhere else.
