@@ -573,3 +573,8 @@ informational, not real threshold breaches.
   used to mark it as the alert page. Gives just this one link's active
   state `bg-amber-500` instead; the other three keep the generic
   highlight.
+* **2026-09-30 (later) — 異常警戒的項目篩選按鈕選中時也改成橘色.** The
+  溫度/濕度/溫溼度 `ui.toggle` still used the page-wide sky-blue "primary"
+  color for its selected state, standing out against the amber nav
+  highlight added above. `toggle-color=orange` on just this instance; the
+  identically-shaped toggle on 首頁's 近期異常 is untouched.
