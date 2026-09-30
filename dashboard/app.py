@@ -958,7 +958,13 @@ def anomalies_page() -> None:
         return
 
     dev_ids = [d["device_id"] for d in devices]
-    state = {"metric": "溫溼度", "date": "全部", "device": "全部"}
+    state = {
+        "metric": "溫溼度",
+        # default to today (Asia/Taipei); falls back to 全部 if today has no
+        # rows yet (see the date_options guard below).
+        "date": (datetime.now(timezone.utc) + timedelta(hours=8)).strftime("%Y-%m-%d"),
+        "device": "全部",
+    }
 
     @ui.refreshable
     def table_section():
