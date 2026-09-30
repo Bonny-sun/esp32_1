@@ -91,11 +91,19 @@ def _fmt_taipei(ts) -> str:
         return str(ts)
 
 
-def line_push_paused() -> bool:
-    """Global kill switch flipped from the dashboard (aqua_settings).
+def line_push_paused(device_id: str) -> bool:
+    """Per-device override (aqua_devices.line_push_paused) if set, else the
+    global kill switch flipped from the dashboard (aqua_settings). NULL on
+    the device row means "no override, follow the global default".
     Fails open to "not paused" on any DB hiccup — a broken settings read
     should never silently swallow a real threshold alert."""
     try:
+        dev_rows = (
+            sb.table("aqua_devices").select("line_push_paused")
+            .eq("device_id", device_id).execute().data
+        )
+        if dev_rows and dev_rows[0]["line_push_paused"] is not None:
+            return bool(dev_rows[0]["line_push_paused"])
         rows = (
             sb.table("aqua_settings").select("value")
             .eq("key", "line_push_paused").execute().data
@@ -106,12 +114,13 @@ def line_push_paused() -> bool:
         return False
 
 
-def push_line(text: str) -> None:
+def push_line(text: str, device_id: str) -> None:
     """Broadcast a LINE message to every friend of the Official Account.
-    No-op (silently) if LINE_CHANNEL_TOKEN isn't set or pushes are paused."""
+    No-op (silently) if LINE_CHANNEL_TOKEN isn't set or pushes are paused
+    (globally, or for this device specifically)."""
     if not LINE_CHANNEL_TOKEN:
         return
-    if line_push_paused():
+    if line_push_paused(device_id):
         print("[line] paused, skipping push", flush=True)
         return
     try:
@@ -175,7 +184,8 @@ def notify_pending_threshold_alerts(device_id: str) -> None:
             f"裝置：{device_id}\n"
             f"項目：{label}\n"
             f"數值：{value_str}\n"
-            f"判讀：{verdict}"
+            f"判讀：{verdict}",
+            device_id,
         )
 
 

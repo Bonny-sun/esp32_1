@@ -279,14 +279,14 @@ def load_forecast_eval(device_id: str, limit: int = FORECAST_EVAL_LOOKBACK_ROWS)
     return pd.DataFrame(out)
 
 
-def load_line_paused() -> bool:
+def load_global_line_paused() -> bool:
     """Not @cached — this is a manual on/off switch the user just clicked
     on this same page, so it must read back exactly what was written."""
     rows = sb().table("aqua_settings").select("value").eq("key", "line_push_paused").execute().data
     return bool(rows and rows[0]["value"])
 
 
-def set_line_paused(paused: bool) -> None:
+def set_global_line_paused(paused: bool) -> None:
     sb().table("aqua_settings").upsert(
         {
             "key": "line_push_paused",
@@ -295,6 +295,20 @@ def set_line_paused(paused: bool) -> None:
         },
         on_conflict="key",
     ).execute()
+
+
+def load_device_line_paused(device_id: str):
+    """Per-device override of the global switch above. None = no override
+    (follow global); True/False forces this device's push on/off. Not
+    @cached, same reasoning as load_global_line_paused()."""
+    rows = (
+        sb().table("aqua_devices").select("line_push_paused").eq("device_id", device_id).execute().data
+    )
+    return rows[0]["line_push_paused"] if rows else None
+
+
+def set_device_line_paused(device_id: str, paused) -> None:
+    sb().table("aqua_devices").update({"line_push_paused": paused}).eq("device_id", device_id).execute()
 
 
 @cached(30)
@@ -1074,25 +1088,49 @@ def admin_page(device: str = "") -> None:
     def device() -> dict:
         return next(d for d in devices if d["device_id"] == state["device_id"])
 
+    OVERRIDE_LABEL = {"default": "跟隨全域設定", "pause": "強制暫停", "on": "強制開啟"}
+    OVERRIDE_TO_VALUE = {"default": None, "pause": True, "on": False}
+
     @ui.refreshable
     def notify_section():
-        paused = load_line_paused()
+        paused = load_global_line_paused()
 
         def on_toggle(e):
-            set_line_paused(e.value)
+            set_global_line_paused(e.value)
             ui.notify(
-                "已暫停 LINE 推播" if e.value else "已恢復 LINE 推播",
+                "已暫停 LINE 推播（全域）" if e.value else "已恢復 LINE 推播（全域）",
                 type="warning" if e.value else "positive",
             )
             notify_section.refresh()
 
         with ui.row().classes("items-center gap-2"):
-            ui.switch("暫停 LINE 推播", value=paused, on_change=on_toggle)
+            ui.switch("暫停 LINE 推播（全域預設）", value=paused, on_change=on_toggle)
             if paused:
                 ui.icon("notifications_off").classes("text-amber-500")
         ui.label("關閉後,異常仍會被記錄(不會累積成之後的洗版),只是不會真的推播到 LINE。").classes(
             "text-xs text-gray-400"
         )
+
+        ui.separator().classes("my-2")
+
+        device_id = state["device_id"]
+        override = load_device_line_paused(device_id)
+        override_key = "default" if override is None else ("pause" if override else "on")
+
+        def on_override_change(e, device_id=device_id):
+            set_device_line_paused(device_id, OVERRIDE_TO_VALUE[e.value])
+            ui.notify(f"已更新「{device_id}」的個別覆寫設定。", type="positive")
+            notify_section.refresh()
+
+        ui.select(
+            OVERRIDE_LABEL,
+            value=override_key,
+            label=f"「{device_id}」個別覆寫",
+            on_change=on_override_change,
+        ).classes("w-56")
+        ui.label(
+            "個別裝置可覆寫全域設定，例如全域開啟推播時，仍可為單一裝置（如維修中）強制暫停。"
+        ).classes("text-xs text-gray-400")
 
     @ui.refreshable
     def display_section():
@@ -1171,6 +1209,7 @@ def admin_page(device: str = "") -> None:
 
     def on_device_change(e):
         state["device_id"] = e.value
+        notify_section.refresh()
         display_section.refresh()
         alert_section.refresh()
 
