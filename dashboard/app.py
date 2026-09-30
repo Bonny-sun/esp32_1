@@ -300,11 +300,20 @@ def set_global_line_paused(paused: bool) -> None:
 def load_device_line_paused(device_id: str):
     """Per-device override of the global switch above. None = no override
     (follow global); True/False forces this device's push on/off. Not
-    @cached, same reasoning as load_global_line_paused()."""
-    rows = (
-        sb().table("aqua_devices").select("line_push_paused").eq("device_id", device_id).execute().data
-    )
-    return rows[0]["line_push_paused"] if rows else None
+    @cached, same reasoning as load_global_line_paused().
+
+    Swallows errors and falls back to "no override" — most notably so a
+    production DB that hasn't run sql/08_notify_pause_device.sql yet (no
+    line_push_paused column) doesn't break rendering of this whole admin
+    page section (and everything after it) with an unhandled PostgREST
+    error."""
+    try:
+        rows = (
+            sb().table("aqua_devices").select("line_push_paused").eq("device_id", device_id).execute().data
+        )
+        return rows[0]["line_push_paused"] if rows else None
+    except Exception:
+        return None
 
 
 def set_device_line_paused(device_id: str, paused) -> None:
@@ -1118,7 +1127,11 @@ def admin_page(device: str = "") -> None:
         override_key = "default" if override is None else ("pause" if override else "on")
 
         def on_override_change(e, device_id=device_id):
-            set_device_line_paused(device_id, OVERRIDE_TO_VALUE[e.value])
+            try:
+                set_device_line_paused(device_id, OVERRIDE_TO_VALUE[e.value])
+            except Exception as exc:
+                ui.notify(f"更新失敗：{exc}", type="negative")
+                return
             ui.notify(f"已更新「{device_id}」的個別覆寫設定。", type="positive")
             notify_section.refresh()
 
