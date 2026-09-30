@@ -699,7 +699,6 @@ def forecast_page(device: str = "") -> None:
             ev_all = ev_all[ev_all["metric"].isin(wanted_labels)]
         if ev_all.empty:
             return
-        ui.label("上次預測 vs 實際").classes("text-sm text-gray-500 mt-3")
 
         dates = sorted(ev_all["_date"].unique(), reverse=True)
         date_options = ["全部"] + dates
@@ -737,6 +736,19 @@ def forecast_page(device: str = "") -> None:
         if ev.empty:
             ui.label("沒有符合篩選條件的預測資料。").classes("text-xs text-gray-400")
             return
+
+        with ui.column().classes("gap-1 mb-2"):
+            ui.label(
+                "ewma+drift模型：運算為近期數值的指數加權移動平均，加上近期趨勢"
+                "(數值變化幅度)外推至預測時間點。優勢為計算量小、所需歷史資料少，"
+                "裝置剛上線也能立即產生預測，適合作為穩定的基準模型。"
+            ).classes("text-xs text-gray-500")
+            ui.label(
+                "gbm模型：運算為以過去14天資料訓練梯度提升樹模型，除了近期數值與趨勢外，"
+                "也將「一天中的時段」納入特徵。優勢為能學習ewma+drift無法處理的日夜週期"
+                "變化，預測較貼近實際規律，但需要足夠的歷史資料才能訓練。"
+            ).classes("text-xs text-gray-500")
+
         # headerClasses is a genuine Quasar QTable column prop (not a
         # NiceGUI one) — see the same pattern on /anomalies's table.
         cols = [
@@ -786,11 +798,15 @@ def forecast_page(device: str = "") -> None:
     with ui.column().classes("w-full max-w-3xl mx-auto p-4 gap-5"):
         with ui.card().classes(SECTION_CARD_CLASSES).props("flat"):
             ui.label("AI 預測").classes("text-lg font-semibold")
+            ui.label(
+                "依裝置、日期、模型顯示AI預測值(依需求預測30分後的資料)，"
+                "並與實際量測值做比較，評估誤差及命中率。"
+            ).classes("text-sm text-gray-500")
             ui.toggle(
                 list(METRIC_FILTERS.keys()),
                 value=state["fc_metric"],
                 on_change=on_fc_metric_change,
-            )
+            ).props("toggle-color=green")
             forecast_section()
 
     ui.timer(60.0, on_refresh_click)
