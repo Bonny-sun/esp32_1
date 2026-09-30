@@ -179,6 +179,19 @@ def test_line_push_paused_device_override_forces_on(monkeypatch, fake_client):
     assert ingest.line_push_paused("esp32-aqua-01") is False
 
 
+def test_line_push_paused_falls_back_to_global_when_device_check_fails(monkeypatch, fake_client):
+    # e.g. production hasn't run sql/08_notify_pause_device.sql yet, so
+    # aqua_devices.line_push_paused doesn't exist — must not make the
+    # user's global on/off switch stop applying.
+    def handler(q):
+        if q.table == "aqua_devices":
+            raise Exception('column "line_push_paused" does not exist (42703)')
+        return [{"value": True}]
+
+    monkeypatch.setattr(ingest, "sb", fake_client(handler))
+    assert ingest.line_push_paused("esp32-aqua-01") is True
+
+
 def test_line_push_paused_fails_open_on_db_error(monkeypatch):
     class Boom:
         def table(self, _name):
