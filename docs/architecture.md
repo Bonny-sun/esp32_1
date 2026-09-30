@@ -614,3 +614,7 @@ informational, not real threshold breaches.
   that still needs one — 裝置總覽's row click keeps it in sync either
   way.
 * **2026-09-30 (later) — 首頁「裝置總覽」更名為「即時資料總表」.**
+* **2026-09-30 (later) — 24h 歷史趨勢圖 x 軸刻度改為每 3 小時一標.** Was
+  every 6 hours (00/06/12/18); tightened to every 3 (00/03/06/.../21),
+  still anchored to midnight so ticks land on the same clock times
+  regardless of when the 24h window happens to start.
