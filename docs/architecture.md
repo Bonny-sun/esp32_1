@@ -746,3 +746,33 @@ informational, not real threshold breaches.
   only 推播設定 got the hybrid treatment, since it was the one setting
   users plausibly want to reason about both per-device and fleet-wide
   at once.
+* **2026-09-30 (later) — fixed 後台設定 breaking when
+  `aqua_devices.line_push_paused` doesn't exist yet.** After the above
+  shipped, the production DB hadn't run `sql/08_notify_pause_device
+  .sql` yet, so `load_device_line_paused()`'s unhandled PostgREST
+  "column does not exist" error broke rendering of everything after it
+  in `notify_section()` — including the entire 顯示設定 card below it.
+  Now fails open to "no override" like the rest of this feature's DB
+  reads, matching `worker/ingest.py`'s existing fail-open pattern;
+  `set_device_line_paused()`'s call site also now shows an error
+  notification instead of raising unhandled. Confirmed with a mock
+  Supabase client that simulates the missing-column error.
+* **2026-09-30 (later) — 推播設定 wording and layout passes.** Several
+  small UX refinements to the same admin-page section, each shipped
+  separately: (1) the global switch's semantics flipped from "打開＝
+  暫停" (colored = paused, backwards) to "打開＝開啟推播" (colored =
+  pushing enabled), matching how a toggle's color state is normally
+  read; (2) 顯示設定 renamed to 裝置面板顯示設定 with an explanation
+  added under the heading and its old bottom caption ("與雲端「警戒
+  設定」告警無關") removed; (3) 推播設定 got its own heading
+  explanation ("開啟或關閉LINE之警戒推播"), and the switch's old static
+  caption below it was removed as redundant; (4) confirmed with the
+  user that decoupling the OLED pet's sweat/shiver thresholds from the
+  real alert thresholds is a legitimate, common pattern (dashboard
+  display thresholds vs. paging/alerting thresholds are routinely kept
+  separate in observability tooling, e.g. Grafana panel color
+  thresholds vs. its alert rules) — so 裝置面板顯示設定 got a
+  clarifying line ("僅影響面板寵物表情，非異常警戒門檻") instead of
+  merging the two; (5) the global switch's own label text now reads
+  已開啟/已關閉 based on live state, replacing a static "開啟 LINE
+  推播" label that didn't change when toggled off.
