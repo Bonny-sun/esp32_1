@@ -374,7 +374,12 @@ def nav_bar(current: str, on_refresh, device_id_getter=None) -> None:
 
     with ui.header().classes("items-center justify-between bg-sky-600 text-white px-4 py-2"):
         with ui.row().classes("items-center gap-1"):
-            ui.label("💧 AIoT智慧物聯系統").classes("text-lg font-semibold mr-3")
+            # Negative margin cancels the header's own px-4/py-2 padding on
+            # this label only, so its darker background bleeds flush to the
+            # header's top/bottom/left edges instead of floating as a chip.
+            ui.label("💧 AIoT智慧物聯系統").classes(
+                "text-lg font-semibold -my-2 -ml-4 py-2 pl-4 pr-3 mr-3 bg-sky-800"
+            )
             for label, path in NAV_LINKS:
                 is_current = path == current
                 btn = ui.button(label, on_click=go(path)).props("flat")
