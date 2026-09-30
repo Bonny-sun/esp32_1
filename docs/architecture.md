@@ -596,3 +596,10 @@ informational, not real threshold breaches.
   place of the header's old `py-2`, the refresh button gets `mr-2` in
   place of `px-4`. Nothing lines up via cancellation anymore, so there's
   no seam left to round away.
+* **2026-09-30 (later) — 首頁暫不顯示近期異常.** Now that `/anomalies`
+  covers every device's alarms in one place, 首頁's per-device 近期異常
+  section duplicated the same underlying data one device at a time.
+  Removed the section (state keys, the refreshable, its metric/date
+  filters, the card in the layout) along with its `refresh_all` wiring.
+  Updated the admin page's threshold-save note and `/anomalies`'s
+  docstring, which both still pointed at the now-removed section.
