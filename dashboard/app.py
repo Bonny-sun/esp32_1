@@ -675,6 +675,7 @@ def forecast_page(device: str = "") -> None:
     state = {
         "device_id": device if device in ids else ids[0],
         "summary_metric": "溫溼度",
+        "summary_model": "全部",
         "fc_metric": "溫溼度",
         # default to today (Asia/Taipei); falls back to 全部 if today has no
         # rows yet (see the date_options guard below). load_forecast_eval
@@ -686,42 +687,82 @@ def forecast_page(device: str = "") -> None:
 
     @ui.refreshable
     def summary_section():
-        """Fleet-wide, one row per (device, model): the single latest
-        forecast+actual pair for the selected metric(s), plus that combo's
-        aggregate 平均誤差/命中率 — the same stats already computed per
-        (metric, model) in forecast_section's caption loop below, just
-        rolled up across every device instead of one device's own detail
-        table. Device-independent by design (no 裝置 selector here),
-        mirroring /anomalies's fleet-wide table."""
+        """Fleet-wide, one row per (device, metric, model): the single
+        latest forecast+actual pair for that combo, plus its aggregate
+        平均誤差/命中率 — the same stats already computed per (metric,
+        model) in forecast_section's caption loop below, just rolled up
+        across every device instead of one device's own detail table.
+        Device-independent by design (no 裝置 selector here), mirroring
+        /anomalies's fleet-wide table."""
         wanted = METRIC_FILTERS[state["summary_metric"]]
         wanted_labels = [LABEL.get(k, k) for k in wanted]
-        rows = []
+
+        # Gather each device's metric-filtered eval frame once, both to
+        # build the rows below and to know which models actually have
+        # data (for the 模型 select's options) before applying that
+        # filter.
+        per_device_ev = []
+        all_models: set[str] = set()
         for d in devices:
-            did = d["device_id"]
-            ev = load_forecast_eval(did)
+            ev = load_forecast_eval(d["device_id"])
             if ev.empty:
                 continue
             ev = ev[ev["metric"].isin(wanted_labels)]
             if ev.empty:
                 continue
-            # ev is newest-target-first already (load_forecast_eval builds
-            # it by iterating aqua_forecasts ordered ts_target desc), so
-            # each model's first row here is its latest.
-            for model_name in sorted(ev["model"].unique()):
-                g = ev[ev["model"] == model_name]
-                latest = g.iloc[0]
-                rows.append(
-                    {
-                        "device_id": d.get("name") or did,
-                        "ts_target": latest["ts_target"],
-                        "model": model_name,
-                        "yhat": latest["yhat"],
-                        "actual": latest["actual"],
-                        "err_avg": round(float(g["err"].mean()), 2),
-                        "hit": latest["hit"],
-                        "hit_rate": f"{(g['hit'] == '✓').mean() * 100:.0f}%",
-                    }
-                )
+            per_device_ev.append((d, ev))
+            all_models.update(ev["model"].unique())
+
+        model_options = ["全部"] + sorted(all_models)
+        if state["summary_model"] not in model_options:
+            state["summary_model"] = "全部"
+
+        def on_summary_model_change(e):
+            state["summary_model"] = e.value
+            summary_section.refresh()
+
+        with ui.row().classes("items-center gap-4"):
+            ui.toggle(
+                list(METRIC_FILTERS.keys()),
+                value=state["summary_metric"],
+                on_change=on_summary_metric_change,
+            ).props("toggle-color=green")
+            ui.select(
+                model_options,
+                value=state["summary_model"],
+                label="模型",
+                on_change=on_summary_model_change,
+            ).classes("w-40")
+
+        rows = []
+        for d, ev in per_device_ev:
+            did = d["device_id"]
+            for m in METRICS:
+                label = LABEL.get(m, m)
+                g_metric = ev[ev["metric"] == label]
+                if g_metric.empty:
+                    continue
+                for model_name in sorted(g_metric["model"].unique()):
+                    if state["summary_model"] != "全部" and model_name != state["summary_model"]:
+                        continue
+                    # g_metric is newest-target-first already (load_forecast_eval
+                    # builds it by iterating aqua_forecasts ordered ts_target
+                    # desc), so each group's first row here is its latest.
+                    g = g_metric[g_metric["model"] == model_name]
+                    latest = g.iloc[0]
+                    rows.append(
+                        {
+                            "device_id": d.get("name") or did,
+                            "ts_target": latest["ts_target"],
+                            "metric": label,
+                            "model": model_name,
+                            "yhat": latest["yhat"],
+                            "actual": latest["actual"],
+                            "err_avg": round(float(g["err"].mean()), 2),
+                            "hit": latest["hit"],
+                            "hit_rate": f"{(g['hit'] == '✓').mean() * 100:.0f}%",
+                        }
+                    )
         if not rows:
             ui.label("尚無預測資料。").classes("text-gray-500")
             return
@@ -730,6 +771,7 @@ def forecast_page(device: str = "") -> None:
             for n, lb in [
                 ("device_id", "裝置名稱"),
                 ("ts_target", "目標時間"),
+                ("metric", "項目"),
                 ("model", "模型"),
                 ("yhat", "預測"),
                 ("actual", "實際"),
@@ -798,7 +840,7 @@ def forecast_page(device: str = "") -> None:
         with ui.column().classes("gap-1 mb-2"):
             ui.label(
                 "*ewma+drift模型：近期數值指數加權平均+趨勢外推，計算快、資料需求低，"
-                "適合當基準模型。"
+                "適合當基準模型，當環境變異大能快速抓到新趨勢。"
             ).classes("text-xs text-gray-500")
             ui.label(
                 "*gbm模型：以過去14天資料訓練梯度提升樹，納入時段特徵，能學習日夜週期"
@@ -859,20 +901,15 @@ def forecast_page(device: str = "") -> None:
     with ui.column().classes("w-full max-w-3xl mx-auto p-4 gap-5"):
         with ui.card().classes(SECTION_CARD_CLASSES).props("flat"):
             ui.label("AI 預測總表").classes("text-lg font-semibold")
-            ui.label("依裝置、溫/溼度顯示最新一筆資料。").classes("text-sm text-gray-500")
-            ui.toggle(
-                list(METRIC_FILTERS.keys()),
-                value=state["summary_metric"],
-                on_change=on_summary_metric_change,
-            ).props("toggle-color=green")
+            ui.label(
+                "依裝置、溫/溼度、模型顯示最新一筆AI預測資料(依需求預測30分後的資料)，"
+                "並與實際量測值做比較，評估誤差及命中率。"
+            ).classes("text-sm text-gray-500")
             summary_section()
 
         with ui.card().classes(SECTION_CARD_CLASSES).props("flat"):
             ui.label("AI預測資料查詢").classes("text-lg font-semibold")
-            ui.label(
-                "依裝置、日期、模型顯示AI預測值(依需求預測30分後的資料)，"
-                "並與實際量測值做比較，評估誤差及命中率。"
-            ).classes("text-sm text-gray-500")
+            ui.label("依裝置、日期、模型查詢AI預測資料。").classes("text-sm text-gray-500")
             ui.toggle(
                 list(METRIC_FILTERS.keys()),
                 value=state["fc_metric"],
