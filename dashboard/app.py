@@ -129,12 +129,6 @@ def load_devices():
 
 
 @cached(30)
-def load_latest(device_id: str):
-    rows = sb().table("aqua_latest").select("*").eq("device_id", device_id).execute().data
-    return rows[0] if rows else None
-
-
-@cached(30)
 def load_all_latest() -> dict:
     """{device_id: latest row} for every device — for the multi-board overview."""
     rows = sb().table("aqua_latest").select("*").execute().data
@@ -416,9 +410,6 @@ def main_page(device: str = "") -> None:
         "range_label": "24 小時",
     }
 
-    def device() -> dict:
-        return next(d for d in devices if d["device_id"] == state["device_id"])
-
     dev_select = None  # set when the layout is built; kept in sync by select_device
 
     def select_device(did: str) -> None:
@@ -494,45 +485,6 @@ def main_page(device: str = "") -> None:
                         ui.label(
                             seen.tz_convert(TZ).strftime("%Y-%m-%d %H:%M:%S") if seen else "—"
                         ).classes(f"{cell} text-gray-600")
-
-    @ui.refreshable
-    def status_section():
-        dev = device()
-        last_seen = dev.get("last_seen")
-        if not last_seen:
-            return
-        seen = pd.to_datetime(last_seen, utc=True, format="ISO8601")
-        age = (datetime.now(timezone.utc) - seen).total_seconds()
-        online = age < 300
-        with ui.row().classes("items-center gap-2"):
-            ui.icon("circle", size="10px").classes("text-green-500" if online else "text-red-500")
-            label = "上線" if online else f"離線（{int(age // 60)} 分鐘）"
-            ui.label(f"{label} · 最後上線 {seen.tz_convert(TZ):%Y-%m-%d %H:%M:%S}").classes(
-                "text-sm text-gray-500"
-            )
-
-    @ui.refreshable
-    def metrics_section():
-        latest = load_latest(state["device_id"])
-        if not latest:
-            ui.label("尚無感測資料。").classes("text-gray-500")
-            return
-        thr = load_thresholds(state["device_id"])
-        with ui.row().classes("w-full gap-4 flex-wrap"):
-            for m in METRICS:
-                v = latest.get(m)
-                if v is None:
-                    continue
-                suffix = f" {UNIT[m]}" if UNIT[m] else ""
-                t = thr.get(m) or {}
-                out_of_band = _out_of_band(v, t)
-                lo, hi = t.get("min_val"), t.get("max_val")
-                colour = "text-red-600" if out_of_band else "text-sky-700"
-                with ui.card().classes("min-w-[140px] flex-1 items-start"):
-                    ui.label(LABEL.get(m, m)).classes("text-sm text-gray-500")
-                    ui.label(f"{v}{suffix}").classes(f"text-2xl font-bold {colour}")
-                    if out_of_band:
-                        ui.label(f"⚠ 超出範圍 [{lo} – {hi}]").classes("text-xs text-red-600")
 
     @ui.refreshable
     def history_section():
@@ -669,8 +621,6 @@ def main_page(device: str = "") -> None:
     # ------------------------------------------------------------- 事件處理
     def refresh_all():
         overview_section.refresh()
-        status_section.refresh()
-        metrics_section.refresh()
         history_section.refresh()
 
     def on_device_change(e):
@@ -693,14 +643,10 @@ def main_page(device: str = "") -> None:
             overview_section()
 
         with ui.card().classes(SECTION_CARD_CLASSES).props("flat"):
-            dev_select = ui.select(
-                ids, value=state["device_id"], label="詳細檢視裝置", on_change=on_device_change
-            ).classes("w-56")
-            status_section()
-            metrics_section()
-
-        with ui.card().classes(SECTION_CARD_CLASSES).props("flat"):
             ui.label("歷史趨勢").classes("text-lg font-semibold")
+            dev_select = ui.select(
+                ids, value=state["device_id"], label="檢視裝置", on_change=on_device_change
+            ).classes("w-56")
             ui.toggle(list(RANGE_HOURS.keys()), value=state["range_label"], on_change=on_range_change)
             history_section()
 
