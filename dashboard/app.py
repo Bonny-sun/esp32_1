@@ -915,13 +915,19 @@ def anomalies_page() -> None:
         show["ts"] = show["ts"].dt.strftime("%m-%d %H:%M")
         show["metric"] = show["metric"].map(lambda x: LABEL.get(x, x))
         show["method"] = show["method"].map(lambda x: method_label.get(x, x))
+        # headerClasses is a genuine Quasar QTable column prop (not a NiceGUI
+        # one) — it lands each column's header <th> with these classes,
+        # which is how a plain ui.table gets a colored header at all.
         columns = [
-            {"name": "ts", "label": "時間", "field": "ts", "align": "left"},
-            {"name": "device_id", "label": "裝置", "field": "device_id", "align": "left"},
-            {"name": "metric", "label": "項目", "field": "metric", "align": "left"},
-            {"name": "value", "label": "數值", "field": "value", "align": "left"},
-            {"name": "method", "label": "方法", "field": "method", "align": "left"},
-            {"name": "note", "label": "說明", "field": "note", "align": "left"},
+            {"name": n, "label": lb, "field": n, "align": "left", "headerClasses": "bg-amber-500 text-white"}
+            for n, lb in [
+                ("ts", "時間"),
+                ("device_id", "裝置"),
+                ("metric", "項目"),
+                ("value", "數值"),
+                ("method", "方法"),
+                ("note", "說明"),
+            ]
         ]
         rows = show.reset_index(drop=True).reset_index(names="_row_id").to_dict("records")
         ui.table(columns=columns, rows=rows, row_key="_row_id").classes("w-full")
