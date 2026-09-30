@@ -1113,7 +1113,11 @@ def admin_page(device: str = "") -> None:
             notify_section.refresh()
 
         with ui.row().classes("items-center gap-2"):
-            ui.switch("開啟 LINE 推播（全域預設）", value=not paused, on_change=on_toggle)
+            ui.switch(
+                "已關閉 LINE 推播（全域預設）" if paused else "已開啟 LINE 推播（全域預設）",
+                value=not paused,
+                on_change=on_toggle,
+            )
             if paused:
                 ui.icon("notifications_off").classes("text-amber-500")
 
