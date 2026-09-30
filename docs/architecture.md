@@ -776,3 +776,22 @@ informational, not real threshold breaches.
   merging the two; (5) the global switch's own label text now reads
   已開啟/已關閉 based on live state, replacing a static "開啟 LINE
   推播" label that didn't change when toggled off.
+* **2026-09-30 (later) — fixed the global LINE-push switch being
+  silently ignored when the device-override column is missing.** User
+  report: turned the global switch off, pushes kept arriving.
+  `worker/ingest.py`'s `line_push_paused()` wrapped BOTH the
+  device-override read and the global `aqua_settings` read in one
+  try/except; when the device-override query failed (production hasn't
+  run `sql/08_notify_pause_device.sql` yet), the exception was caught
+  and the function returned `False` immediately, never reaching the
+  global check at all — so the global switch had no effect whenever
+  that per-device query errored, which on the unmigrated production DB
+  was every single call. Split into two try/excepts: a failed
+  device-override read now falls back to the global check instead of
+  skipping it; only a failure of BOTH checks still fails open to "not
+  paused". This is the worker-side twin of the dashboard-side fix
+  earlier today — same missing-migration trigger, but there the bug
+  broke page rendering, here it silently broke the feature's actual
+  purpose. Added a regression test reproducing the exact failure
+  (missing-column error on the device query, global set to paused)
+  asserting the global setting is honored.
