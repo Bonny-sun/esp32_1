@@ -384,7 +384,7 @@ def nav_bar(current: str, on_refresh, device_id_getter=None) -> None:
                     # amber, matching 異常警戒's old standalone page header —
                     # a visual "this is the alert page" cue the generic
                     # white/sky highlight below doesn't carry.
-                    btn.classes("bg-amber-500 text-white font-bold")
+                    btn.classes("bg-amber-600 text-white font-bold")
                 else:
                     btn.classes("bg-white text-sky-700 font-bold")
         ui.button(icon="refresh", on_click=on_refresh).props("flat round color=white").classes(
@@ -919,7 +919,7 @@ def anomalies_page() -> None:
         # one) — it lands each column's header <th> with these classes,
         # which is how a plain ui.table gets a colored header at all.
         columns = [
-            {"name": n, "label": lb, "field": n, "align": "left", "headerClasses": "bg-amber-500 text-white"}
+            {"name": n, "label": lb, "field": n, "align": "left", "headerClasses": "bg-amber-600 text-white"}
             for n, lb in [
                 ("ts", "時間"),
                 ("device_id", "裝置"),
@@ -951,7 +951,7 @@ def anomalies_page() -> None:
             ).classes("text-sm text-gray-500")
             ui.toggle(
                 list(METRIC_FILTERS.keys()), value=state["metric"], on_change=on_metric_change
-            ).props("toggle-color=orange")  # matches the amber nav highlight above
+            ).props("toggle-color=orange-9")  # matches the amber nav highlight above
             table_section()
 
     ui.timer(60.0, on_refresh_click)
