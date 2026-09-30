@@ -693,39 +693,6 @@ def forecast_page(device: str = "") -> None:
             return
         wanted = METRIC_FILTERS[state["fc_metric"]]
         wanted_labels = [LABEL.get(k, k) for k in wanted]
-        # one card per (metric, model) — champion (ewma+drift) and
-        # challenger (gbm) run side by side, never replacing each other
-        latest = (
-            fc[fc["metric"].isin(wanted)]
-            .sort_values("created_at")
-            .groupby(["metric", "model"])
-            .tail(1)
-            .sort_values(["metric", "model"])
-        )
-        # Fixed 2-column grid, not a flex-wrap row — flex-wrap breaks the
-        # (metric, model) pairing as soon as a row happens to fit 3 cards
-        # instead of 2 (odd number wraps, "氣溫 · gbm" lands alone on the
-        # next line, no longer next to "氣溫 · ewma+drift"). Grid always
-        # keeps every metric's two model-cards on the same row.
-        with ui.grid(columns=2).classes("w-full gap-4"):
-            for _, r in latest.iterrows():
-                m = r["metric"]
-                u = UNIT.get(m, "")
-                with ui.card().classes("items-start"):
-                    ui.label(
-                        f"{LABEL.get(m, m)} · {r['model']} · {int(r['horizon_min'])} 分鐘後"
-                    ).classes("text-sm text-gray-500")
-                    ui.label(f"{round(float(r['yhat']), 1)} {u}".strip()).classes(
-                        "text-2xl font-bold text-indigo-700"
-                    )
-                    lo_v, hi_v = r.get("yhat_lower"), r.get("yhat_upper")
-                    if pd.notna(lo_v) and pd.notna(hi_v):
-                        ui.label(
-                            f"可能範圍 {round(float(lo_v), 1)} – {round(float(hi_v), 1)}"
-                        ).classes("text-xs text-gray-400")
-        newest = fc["created_at"].max()
-        models = "、".join(sorted(fc["model"].unique()))
-        ui.label(f"模型:{models} · 產生於 {newest:%m-%d %H:%M}").classes("text-xs text-gray-400")
 
         ev_all = load_forecast_eval(state["device_id"])
         if not ev_all.empty:
@@ -753,6 +720,9 @@ def forecast_page(device: str = "") -> None:
 
         with ui.row().classes("gap-4"):
             ui.select(
+                ids, value=state["device_id"], label="裝置", on_change=on_device_change
+            ).classes("w-40")
+            ui.select(
                 date_options, value=state["fc_date"], label="日期", on_change=on_fc_date_change
             ).classes("w-40")
             ui.select(
@@ -767,14 +737,19 @@ def forecast_page(device: str = "") -> None:
         if ev.empty:
             ui.label("沒有符合篩選條件的預測資料。").classes("text-xs text-gray-400")
             return
+        # headerClasses is a genuine Quasar QTable column prop (not a
+        # NiceGUI one) — see the same pattern on /anomalies's table.
         cols = [
-            {"name": "ts_target", "label": "目標時間", "field": "ts_target", "align": "left"},
-            {"name": "metric", "label": "項目", "field": "metric", "align": "left"},
-            {"name": "model", "label": "模型", "field": "model", "align": "left"},
-            {"name": "yhat", "label": "預測", "field": "yhat", "align": "left"},
-            {"name": "actual", "label": "實際", "field": "actual", "align": "left"},
-            {"name": "err", "label": "誤差", "field": "err", "align": "left"},
-            {"name": "hit", "label": "命中", "field": "hit", "align": "left"},
+            {"name": n, "label": lb, "field": n, "align": "left", "headerClasses": "bg-green-600 text-white"}
+            for n, lb in [
+                ("ts_target", "目標時間"),
+                ("metric", "項目"),
+                ("model", "模型"),
+                ("yhat", "預測"),
+                ("actual", "實際"),
+                ("err", "誤差"),
+                ("hit", "命中"),
+            ]
         ]
         # ts_target alone can repeat across rows now (both models predict the
         # same target time each run) — row_key needs a value unique per row.
@@ -809,11 +784,6 @@ def forecast_page(device: str = "") -> None:
     nav_bar("/forecast", on_refresh_click, lambda: state["device_id"])
 
     with ui.column().classes("w-full max-w-3xl mx-auto p-4 gap-5"):
-        with ui.card().classes(SECTION_CARD_CLASSES).props("flat"):
-            ui.select(
-                ids, value=state["device_id"], label="檢視裝置", on_change=on_device_change
-            ).classes("w-56")
-
         with ui.card().classes(SECTION_CARD_CLASSES).props("flat"):
             ui.label("AI 預測").classes("text-lg font-semibold")
             ui.toggle(
