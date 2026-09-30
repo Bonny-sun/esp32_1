@@ -723,3 +723,26 @@ informational, not real threshold breaches.
   independent.
 * **2026-09-30 (later) — 後台設定區塊順序改成警戒設定、推播設定、顯示
   設定.** Was 推播設定/顯示設定/警戒設定.
+* **2026-09-30 (later) — 即時資料總表 heading dropped its
+  "（點列切換下方詳細檢視）" suffix.** The 歷史趨勢 card's device
+  selector moved out of the (now removed) 首頁「詳細檢視裝置」card
+  earlier in the session, so 即時資料總表's rows no longer drive that
+  card's selection — the hint text describing that old behavior was
+  stale and removed along with it.
+* **2026-09-30 (later) — LINE 推播改成全域預設 + 個別裝置可覆寫.**
+  推播設定 was a pure global on/off switch (`aqua_settings
+  .line_push_paused`). Changed to a global default + optional per-device
+  override, matching the layering Grafana/PagerDuty-style alerting
+  systems use — a default policy with per-target overrides — so a
+  single device under maintenance can be force-paused without touching
+  every other device's notifications. Added a nullable
+  `aqua_devices.line_push_paused` column (`sql/08_notify_pause_device
+  .sql`): NULL means "no override, follow the global default"; true/
+  false forces that device's push on/off regardless of the global
+  switch. `worker/ingest.py`'s `line_push_paused()` now takes
+  `device_id`, checks the device override first and falls back to the
+  global setting, keeping the existing fail-open-to-not-paused behavior
+  on any DB error. 警戒設定/顯示設定 stayed pure per-device, unchanged —
+  only 推播設定 got the hybrid treatment, since it was the one setting
+  users plausibly want to reason about both per-device and fleet-wide
+  at once.
