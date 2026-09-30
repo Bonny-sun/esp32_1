@@ -1262,6 +1262,9 @@ def admin_page(device: str = "") -> None:
         with ui.card().classes(SECTION_CARD_CLASSES).props("flat"):
             ui.label("裝置面板顯示設定").classes("text-lg font-semibold")
             ui.label("面板可選擇不同寵物，並設定流汗、發抖門檻。").classes(
+                "text-xs text-gray-400"
+            )
+            ui.label("「僅影響面板寵物表情，非異常警戒門檻」").classes(
                 "text-xs text-gray-400 mb-1"
             )
             display_section()
