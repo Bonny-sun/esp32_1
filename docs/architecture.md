@@ -657,3 +657,6 @@ informational, not real threshold breaches.
   linear drift extrapolation vs. a gradient-boosted tree trained on 14
   days of history with time-of-day features), not written from scratch
   as marketing copy.
+* **2026-09-30 (later) — AI預測頁模型說明改精簡,前方加上*.** Shortened
+  the two model explanations from two sentences each to one line each,
+  kept the same core facts, each now prefixed with `*`.
