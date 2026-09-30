@@ -569,13 +569,14 @@ def main_page(device: str = "") -> None:
                 y_axis = {"type": "value", "scale": True}
 
             if hours <= 24:
-                # Ticks on the 6-hour boundaries (00/06/12/18); full date+time.
+                # Ticks every 3 hours from midnight (00/03/06/09/12/15/18/21);
+                # full date+time.
                 tick_formatter = (
                     "function(value){"
                     "var m=/(\\d{2}):(\\d{2})$/.exec(value);"
                     "if(!m)return '';"
                     "var h=parseInt(m[1],10),mi=parseInt(m[2],10);"
-                    "return (mi===0&&h%6===0)?value:'';"
+                    "return (mi===0&&h%3===0)?value:'';"
                     "}"
                 )
             else:
