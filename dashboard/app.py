@@ -739,14 +739,12 @@ def forecast_page(device: str = "") -> None:
 
         with ui.column().classes("gap-1 mb-2"):
             ui.label(
-                "ewma+drift模型：運算為近期數值的指數加權移動平均，加上近期趨勢"
-                "(數值變化幅度)外推至預測時間點。優勢為計算量小、所需歷史資料少，"
-                "裝置剛上線也能立即產生預測，適合作為穩定的基準模型。"
+                "*ewma+drift模型：近期數值指數加權平均+趨勢外推，計算快、資料需求低，"
+                "適合當基準模型。"
             ).classes("text-xs text-gray-500")
             ui.label(
-                "gbm模型：運算為以過去14天資料訓練梯度提升樹模型，除了近期數值與趨勢外，"
-                "也將「一天中的時段」納入特徵。優勢為能學習ewma+drift無法處理的日夜週期"
-                "變化，預測較貼近實際規律，但需要足夠的歷史資料才能訓練。"
+                "*gbm模型：以過去14天資料訓練梯度提升樹，納入時段特徵，能學習日夜週期"
+                "變化，但需足夠歷史資料才能訓練。"
             ).classes("text-xs text-gray-500")
 
         # headerClasses is a genuine Quasar QTable column prop (not a
