@@ -1205,16 +1205,16 @@ def admin_page(device: str = "") -> None:
         ).classes("w-56")
 
         with ui.card().classes(SECTION_CARD_CLASSES).props("flat"):
+            ui.label("警戒設定").classes("text-lg font-semibold")
+            alert_section()
+
+        with ui.card().classes(SECTION_CARD_CLASSES).props("flat"):
             ui.label("推播設定").classes("text-lg font-semibold")
             notify_section()
 
         with ui.card().classes(SECTION_CARD_CLASSES).props("flat"):
             ui.label("顯示設定").classes("text-lg font-semibold")
             display_section()
-
-        with ui.card().classes(SECTION_CARD_CLASSES).props("flat"):
-            ui.label("警戒設定").classes("text-lg font-semibold")
-            alert_section()
 
     def on_refresh_click():
         # No auto ui.timer for this page — unlike the read-only pages, a
