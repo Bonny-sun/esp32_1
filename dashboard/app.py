@@ -939,9 +939,10 @@ def anomalies_page() -> None:
     with ui.column().classes("w-full max-w-3xl mx-auto p-4 gap-5"):
         with ui.card().classes(SECTION_CARD_CLASSES).props("flat"):
             ui.label("異常警戒").classes("text-lg font-semibold")
-            ui.label("跨裝置混合列表,依時間排序,不受任何單一裝置選擇影響。").classes(
-                "text-sm text-gray-500"
-            )
+            ui.label(
+                "依裝置、日期顯示異常警戒資訊，並發送警戒訊息至LINE群組，"
+                "相同裝置警戒間隔1小時推送1筆。"
+            ).classes("text-sm text-gray-500")
             ui.toggle(
                 list(METRIC_FILTERS.keys()), value=state["metric"], on_change=on_metric_change
             ).props("toggle-color=orange")  # matches the amber nav highlight above
