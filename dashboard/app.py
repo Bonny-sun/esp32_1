@@ -988,12 +988,17 @@ def anomalies_page() -> None:
             ui.select(
                 date_options, value=state["date"], label="日期", on_change=on_date_change
             ).classes("w-40")
-        ui.label("每個整點最多一筆").classes("text-xs text-gray-400")
-        ui.label(
-            "超出範圍:數值超出後台設定的上/下限。"
-            "統計偏離:數值相對近1小時平均值的變化幅度異常，"
-            "即使未超出上/下限也可能被標記。"
-        ).classes("text-xs text-gray-400")
+        with ui.column().classes("gap-0.5"):
+            ui.label("警戒值每個整點至多一筆，警示類型分為以下兩者：").classes(
+                "text-xs text-gray-400"
+            )
+            ui.label("*超出範圍：數值超出後台設定的上/下限。").classes(
+                "text-xs text-gray-400"
+            )
+            ui.label(
+                "*統計偏離：數值相對近1小時平均值的變化幅度異常，"
+                "即使未超出上/下限也可能被標記。"
+            ).classes("text-xs text-gray-400")
 
         if state["date"] != "全部" and not an.empty:
             an = an[an["ts"].dt.strftime("%Y-%m-%d") == state["date"]]
