@@ -689,3 +689,19 @@ informational, not real threshold breaches.
   ewma+drift explanation with 當環境變異大能快速抓到新趨勢 — its short
   lookback window + drift extrapolation reacts to a sudden trend change
   faster than gbm's longer training window.
+* **2026-09-30 (later) — redacted a real Supabase URL ahead of going
+  public.** `dashboard/.env.example` had the actual project hostname
+  committed (`worker/.env.example`/`analysis/.env.example` both already
+  used a generic `xxxxxxxx.supabase.co` placeholder). No key was exposed
+  — `SUPABASE_SERVICE_KEY` there was already a placeholder — but the repo
+  was about to switch from private to public, so this shouldn't sit in
+  tracked history. Checked first for anything else that would matter:
+  `include/secrets.h`/`.env` are gitignored and untracked, `render.yaml`
+  keeps every real secret as `sync: false` (set manually in Render's
+  dashboard, never in the file).
+* **2026-09-30 (later) — 異常警戒加上超出範圍/統計偏離說明,「方法」欄
+  改名「警示類型」.** Explanation matched against the actual
+  implementation: 超出範圍 is `aqua_check_thresholds()`'s simple min/max
+  band check, 統計偏離 is `baseline.py`'s `detect_univariate()` rolling
+  z-score deviation (can fire even when the value is within the
+  configured band).
