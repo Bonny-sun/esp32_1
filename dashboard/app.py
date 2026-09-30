@@ -674,7 +674,7 @@ def forecast_page(device: str = "") -> None:
     ids = [d["device_id"] for d in devices]
     state = {
         "device_id": device if device in ids else ids[0],
-        "summary_metric": "溫溼度",
+        "summary_metric": "溫度",
         "summary_model": "全部",
         "fc_metric": "溫溼度",
         # default to today (Asia/Taipei); falls back to 全部 if today has no
