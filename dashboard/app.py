@@ -1116,9 +1116,6 @@ def admin_page(device: str = "") -> None:
             ui.switch("開啟 LINE 推播（全域預設）", value=not paused, on_change=on_toggle)
             if paused:
                 ui.icon("notifications_off").classes("text-amber-500")
-        ui.label("關閉後,異常仍會被記錄(不會累積成之後的洗版),只是不會真的推播到 LINE。").classes(
-            "text-xs text-gray-400"
-        )
 
         ui.separator().classes("my-2")
 
@@ -1259,6 +1256,7 @@ def admin_page(device: str = "") -> None:
 
         with ui.card().classes(SECTION_CARD_CLASSES).props("flat"):
             ui.label("推播設定").classes("text-lg font-semibold")
+            ui.label("開啟或關閉LINE之警戒推播。").classes("text-xs text-gray-400 mb-1")
             notify_section()
 
         with ui.card().classes(SECTION_CARD_CLASSES).props("flat"):
