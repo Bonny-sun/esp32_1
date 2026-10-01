@@ -404,13 +404,18 @@ def nav_bar(current: str, on_refresh, device_id_getter=None) -> None:
     # with nothing to cancel out — a negative-margin "bleed" on the label
     # alone left a 1px seam of the lighter header color on some browsers'
     # zoom/DPI rounding.
-    with ui.header().classes("items-center justify-between bg-sky-600 text-white p-0"):
+    with ui.header().classes(
+        "items-center justify-between bg-sky-600 text-white p-0 flex-nowrap"
+    ):
         # flex-nowrap + overflow-x-auto: on a narrow phone the brand block
         # plus 4 nav buttons don't all fit on one line — the previous plain
         # ui.row() let them wrap to a second line instead, which looked
         # broken. Scrolling horizontally (shrink-0 on every child so
         # buttons keep their normal width instead of getting squeezed)
-        # keeps the bar a single row on any width.
+        # keeps the bar a single row on any width. flex-nowrap on the
+        # ui.header() itself too — without it, the header (this row plus
+        # the refresh button) was the thing wrapping, pushing the refresh
+        # button down onto its own stranded second line.
         with ui.row().classes("items-center gap-1 pr-2 flex-nowrap overflow-x-auto"):
             with ui.row().classes("items-center self-stretch bg-sky-800 px-4 gap-0 shrink-0"):
                 ui.label("💧 AIoT智慧物聯系統").classes("text-lg font-semibold whitespace-nowrap")
