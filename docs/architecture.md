@@ -897,3 +897,44 @@ informational, not real threshold breaches.
   verified the same way at both widths. Worth remembering for any
   future responsive show/hide in this codebase: prefer the
   single-direction variant over a `hidden` + override pair.
+* **2026-10-01 (later) — switchable theme (經典藍 / 科技感) + lighter
+  classic background.** User shared a reference mockup and asked for a
+  dark "tech" theme that can be switched on, with more themes addable
+  later, plus a light gray page background behind the classic theme's
+  white cards. Implemented as ONE global CSS block (`THEME_CSS`,
+  injected once via `ui.add_head_html`), scoped under a `theme-tech`
+  class `nav_bar()` toggles on `<body>` via `ui.query("body").classes(...)`
+  — not by threading a second set of theme-aware Tailwind classes
+  through every individual `ui.label()`/`ui.card()` call site (hundreds
+  of them, most with no explicit color class to begin with). The CSS
+  overrides the small, consistent set of classes this app actually
+  reuses everywhere: `.q-card`, the handful of `text-gray-*`/
+  `border-gray-*` shades, `.bg-sky-50`/`.bg-sky-100`/`.text-sky-600`/
+  `.text-sky-700`, and Quasar's form-field/table classes. Adding a
+  future theme means adding another `theme-<name>` block here, not
+  touching every page function. The choice persists per-browser via
+  `app.storage.user` (a signed cookie — added `STORAGE_SECRET` and
+  `ui.run(storage_secret=...)`, both required for `app.storage.user` to
+  work at all); switching reloads the page (`ui.navigate.reload()`)
+  since this is a traditional multi-page server-rendered app with no
+  client-side state to patch in place. Every override rule uses
+  `!important`, continuing the policy from the `max-md:hidden` pitfall
+  above: this NiceGUI version's bundled Tailwind runtime doesn't
+  reliably resolve same-specificity utility competition by source order
+  alone.
+  **Pitfall**: a handful of elements (the mobile bottom tab bar, the
+  active-page nav pill, one device-table row background) used the
+  literal `bg-white` Tailwind class, and no `!important` override of
+  `.bg-white` — regardless of added specificity — would turn them dark.
+  Root-caused via Chrome DevTools Protocol (`CSS.getMatchedStylesForNode`,
+  since `document.styleSheets` iteration alone doesn't surface Tailwind
+  v4's `@layer`-wrapped rules): NiceGUI's own base stylesheet carries a
+  `.bg-white { background: #fff !important; }` rule inside a CSS layer.
+  Per the CSS Cascade Layers spec, layer priority *reverses* for
+  `!important` declarations, and unlayered styles are treated as the
+  *lowest*-priority layer in that reversed order — so a layered
+  `!important` rule beats an unlayered `!important` rule no matter how
+  much higher its selector's specificity is. Renamed the 3 call sites
+  from `bg-white` to `bg-gray-50` (visually identical in the classic
+  theme, not specially forced) instead of fighting the framework's own
+  layered rule.
