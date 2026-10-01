@@ -20,6 +20,9 @@ __pycache__/
 venv/
 .ipynb_checkpoints/
 
+# NiceGUI (per-browser storage.user cookie-signing state, runtime only)
+.nicegui/
+
 # OS
 .DS_Store
 Thumbs.db
