@@ -76,6 +76,15 @@ METRIC_FILTERS = {  # 「近期異常」「上次預測 vs 實際」的項目篩
     "溫溼度": ["temperature", "humidity"],
 }
 
+# AI 預測總表 row order within each (device, metric) group: gbm (the more
+# accurate challenger model) listed above ewma+drift (the baseline); any
+# future model name not in this list sorts alphabetically after both.
+MODEL_ORDER = {"gbm": 0, "ewma+drift": 1}
+
+
+def _model_sort_key(model_name: str):
+    return (MODEL_ORDER.get(model_name, 99), model_name)
+
 MQTT_HOST = os.environ.get("MQTT_HOST", "")
 MQTT_PORT = int(os.environ.get("MQTT_PORT", "8883"))
 MQTT_USER = os.environ.get("MQTT_USER", "")
@@ -771,7 +780,7 @@ def forecast_page(device: str = "") -> None:
                 g_metric = ev[ev["metric"] == label]
                 if g_metric.empty:
                     continue
-                for model_name in sorted(g_metric["model"].unique()):
+                for model_name in sorted(g_metric["model"].unique(), key=_model_sort_key):
                     if state["summary_model"] != "全部" and model_name != state["summary_model"]:
                         continue
                     # g_metric is newest-target-first already (load_forecast_eval
