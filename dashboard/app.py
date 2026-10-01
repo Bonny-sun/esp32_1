@@ -399,41 +399,37 @@ def nav_bar(current: str, on_refresh, device_id_getter=None) -> None:
 
         return _go
 
-    # p-0 header: padding lives on each child instead of the header itself,
-    # so the brand block's own background covers its own box edge-to-edge
-    # with nothing to cancel out — a negative-margin "bleed" on the label
-    # alone left a 1px seam of the lighter header color on some browsers'
-    # zoom/DPI rounding.
-    with ui.header().classes(
-        "items-center justify-between bg-sky-600 text-white p-0 flex-nowrap"
-    ):
-        # flex-nowrap + overflow-x-auto: on a narrow phone the brand block
-        # plus 4 nav buttons don't all fit on one line — the previous plain
-        # ui.row() let them wrap to a second line instead, which looked
-        # broken. Scrolling horizontally (shrink-0 on every child so
-        # buttons keep their normal width instead of getting squeezed)
-        # keeps the bar a single row on any width. flex-nowrap on the
-        # ui.header() itself too — without it, the header (this row plus
-        # the refresh button) was the thing wrapping, pushing the refresh
-        # button down onto its own stranded second line.
-        with ui.row().classes("items-center gap-1 pr-2 flex-nowrap overflow-x-auto"):
-            with ui.row().classes("items-center self-stretch bg-sky-800 px-4 gap-0 shrink-0"):
+    # p-0 header: padding lives on each child instead of the header itself.
+    #
+    # Two rows instead of one horizontally-scrolling row: brand + refresh
+    # on top, the 4 nav buttons on their own row below, full width. Nothing
+    # to scroll to find, and every button gets a bigger, easier-to-tap
+    # target — the scrolling single-row version (2026-09-30) was harder to
+    # use on a phone than it looked in a desktop screenshot. Row 1 is a
+    # single flat band (no separate darker "chip" box behind the brand
+    # label) — that two-tone split plus the lone refresh icon stranded far
+    # right left a visually heavy block on one side and an awkward empty
+    # gap on the other; balanced padding on one flat row reads calmer.
+    with ui.header().classes("bg-sky-600 text-white p-0"):
+        with ui.column().classes("w-full gap-0"):
+            with ui.row().classes("w-full items-center justify-between flex-nowrap px-4 py-2"):
                 ui.label("💧 AIoT智慧物聯系統").classes("text-lg font-semibold whitespace-nowrap")
-            for label, path in NAV_LINKS:
-                is_current = path == current
-                btn = ui.button(label, on_click=go(path)).props("flat").classes("my-2 shrink-0")
-                if not is_current:
-                    btn.classes("text-white")
-                elif path == "/anomalies":
-                    # amber, matching 異常警戒's old standalone page header —
-                    # a visual "this is the alert page" cue the generic
-                    # white/sky highlight below doesn't carry.
-                    btn.classes("bg-amber-600 text-white font-bold")
-                else:
-                    btn.classes("bg-white text-sky-700 font-bold")
-        ui.button(icon="refresh", on_click=on_refresh).props("flat round color=white").classes(
-            "mr-2 shrink-0"
-        )
+                ui.button(icon="refresh", on_click=on_refresh).props(
+                    "flat round dense color=white"
+                ).classes("shrink-0")
+            with ui.row().classes("w-full items-center justify-center flex-wrap gap-1 px-2 pb-2"):
+                for label, path in NAV_LINKS:
+                    is_current = path == current
+                    btn = ui.button(label, on_click=go(path)).props("flat").classes("my-1")
+                    if not is_current:
+                        btn.classes("text-white")
+                    elif path == "/anomalies":
+                        # amber, matching 異常警戒's old standalone page header —
+                        # a visual "this is the alert page" cue the generic
+                        # white/sky highlight below doesn't carry.
+                        btn.classes("bg-amber-600 text-white font-bold")
+                    else:
+                        btn.classes("bg-white text-sky-700 font-bold")
 
 
 @ui.page("/", title="💧 AIoT智慧物聯系統 · 首頁")
