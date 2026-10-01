@@ -823,7 +823,12 @@ def forecast_page(device: str = "") -> None:
             ]
         ]
         table_rows = [{**r, "_row_id": i} for i, r in enumerate(rows)]
-        ui.table(columns=cols, rows=table_rows, row_key="_row_id").classes("w-full")
+        # overflow-x-auto on a plain div, not the table itself: on a phone
+        # this table's 9 columns don't fit, so it needs to scroll — bounded
+        # inside the card instead of bleeding past its right border with no
+        # visible affordance (how it looked before this wrapper).
+        with ui.element("div").classes("w-full overflow-x-auto"):
+            ui.table(columns=cols, rows=table_rows, row_key="_row_id").classes("w-full")
 
     @ui.refreshable
     def forecast_section():
@@ -906,7 +911,8 @@ def forecast_page(device: str = "") -> None:
         # ts_target alone can repeat across rows now (both models predict the
         # same target time each run) — row_key needs a value unique per row.
         rows = ev.reset_index(drop=True).reset_index(names="_row_id").to_dict("records")
-        ui.table(columns=cols, rows=rows, row_key="_row_id").classes("w-full")
+        with ui.element("div").classes("w-full overflow-x-auto"):
+            ui.table(columns=cols, rows=rows, row_key="_row_id").classes("w-full")
 
     def on_summary_metric_change(e):
         state["summary_metric"] = e.value
@@ -1063,7 +1069,8 @@ def anomalies_page() -> None:
             ]
         ]
         rows = show.reset_index(drop=True).reset_index(names="_row_id").to_dict("records")
-        ui.table(columns=columns, rows=rows, row_key="_row_id").classes("w-full")
+        with ui.element("div").classes("w-full overflow-x-auto"):
+            ui.table(columns=columns, rows=rows, row_key="_row_id").classes("w-full")
 
     def on_metric_change(e):
         state["metric"] = e.value
