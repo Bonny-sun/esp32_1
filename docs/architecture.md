@@ -869,3 +869,31 @@ informational, not real threshold breaches.
   stranded in a large empty gap on the right. Dropped the chip in favor
   of one flat `bg-sky-600` band with matching padding on both ends —
   calmer and more balanced than the two-tone split.
+* **2026-10-01 (later) — visual polish phase 1: gradient header, card
+  shadows, mobile bottom tab bar.** User shared a ChatGPT-generated
+  design mockup and asked to work toward it in stages. Phase 1 (pure
+  styling + mobile nav structure, no new features like a notification
+  bell, avatar, or CSV export — those need real backend semantics this
+  app doesn't have yet, e.g. no per-user identity, no read/unread
+  state): header background switched from flat `bg-sky-600` to a
+  `from-sky-500 to-blue-700` gradient; `SECTION_CARD_CLASSES` (the one
+  constant every page's cards share) switched from a flat hard border
+  to `rounded-xl shadow-md` for a softer, more modern look everywhere
+  at once; `NAV_LINKS` gained a third tuple element (Material icon
+  name) used on both nav renderings; mobile now gets a real bottom tab
+  bar (`ui.footer()`, icon + label per item) instead of reusing the
+  desktop header's horizontal row — the thumb-reachable, app-style
+  convention, and it stops the header needing to fit a second row of
+  buttons on a narrow screen at all. Desktop keeps the existing header
+  row.
+  **Pitfall**: toggling which nav (header row vs. footer) is visible
+  per viewport was first tried as `hidden md:flex` (hidden by default,
+  a wider-screen variant un-hides it) — this measurably stayed
+  `display:none` at 1200px (confirmed via `getComputedStyle` in a real
+  browser, not just visual inspection). Root cause not fully isolated,
+  but switching to a single-direction `max-md:hidden` (visible by
+  default, only a small-screen variant hides it — no second utility
+  class competing to win back `display:flex`) fixed it immediately,
+  verified the same way at both widths. Worth remembering for any
+  future responsive show/hide in this codebase: prefer the
+  single-direction variant over a `hidden` + override pair.
