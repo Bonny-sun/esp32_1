@@ -73,6 +73,73 @@ NAV_LINKS = [
     ("AI預測", "/forecast", "insights"),
     ("後台設定", "/admin", "settings"),
 ]
+
+# ---------------------------------------------------------------- 主題
+# Switchable look, stored per-browser (app.storage.user, a signed cookie —
+# see STORAGE_SECRET). Deliberately NOT implemented by threading a second
+# set of Tailwind classes through every ui.label()/ui.card() call in this
+# file (hundreds of call sites, most with no explicit color class at all,
+# relying on the browser/Quasar default) — instead one global stylesheet,
+# scoped under a `theme-tech` class nav_bar() puts on <body>, overrides the
+# small, consistent set of Tailwind/Quasar classes this app actually uses
+# (card backgrounds via Quasar's own `.q-card`, the handful of text-gray-*
+# shades, borders, form fields, tables). Adding a theme later means adding
+# another `theme-<name>` block here, not touching every page function.
+# `!important` throughout: this NiceGUI version's bundled Tailwind runtime
+# doesn't reliably let a later same-specificity rule win by source order
+# alone (see the `max-md:hidden` vs `hidden md:flex` finding from the same
+# session) — important sidesteps that gamble entirely.
+THEMES = {"classic": "經典藍", "tech": "科技感"}
+DEFAULT_THEME = "classic"
+THEME_CSS = """
+body { background-color: #f3f4f6 !important; }
+
+body.theme-tech { background-color: #0b1220 !important; color: #e2e8f0 !important; }
+body.theme-tech .q-card {
+    background-color: #121a35 !important;
+    border-color: #1e3a5f !important;
+    box-shadow: 0 0 14px rgba(56, 189, 248, 0.18) !important;
+}
+body.theme-tech .q-page, body.theme-tech .q-layout, body.theme-tech .q-page-container {
+    color: inherit !important;
+}
+body.theme-tech .text-gray-800 { color: #e2e8f0 !important; }
+body.theme-tech .text-gray-700 { color: #cbd5e1 !important; }
+body.theme-tech .text-gray-600,
+body.theme-tech .text-gray-500,
+body.theme-tech .text-gray-400 { color: #94a3b8 !important; }
+body.theme-tech .border-gray-100,
+body.theme-tech .border-gray-200,
+body.theme-tech .border-gray-400 { border-color: #1e3a5f !important; }
+body.theme-tech .bg-gray-50 { background-color: #121a35 !important; }
+body.theme-tech .bg-sky-50 { background-color: #0f1b3d !important; }
+body.theme-tech .bg-sky-100 { background-color: #16204a !important; }
+body.theme-tech .border-sky-100,
+body.theme-tech .border-sky-600 { border-color: #1e3a5f !important; }
+body.theme-tech .text-sky-700,
+body.theme-tech .text-sky-600 { color: #7dd3fc !important; }
+body.theme-tech .q-field__control,
+body.theme-tech .q-field__native,
+body.theme-tech .q-field__label,
+body.theme-tech .q-field__marginal { background-color: transparent !important; color: #e2e8f0 !important; }
+body.theme-tech table, body.theme-tech .q-table,
+body.theme-tech .q-table__container { background-color: #121a35 !important; color: #e2e8f0 !important; }
+body.theme-tech .q-table tbody tr:nth-child(even) { background-color: #16204a !important; }
+"""
+
+
+def get_theme() -> str:
+    try:
+        return app.storage.user.get("theme", DEFAULT_THEME)
+    except Exception:
+        return DEFAULT_THEME
+
+
+def set_theme(name: str) -> None:
+    app.storage.user["theme"] = name
+
+
+ui.add_head_html(f"<style>{THEME_CSS}</style>", shared=True)
 RANGE_HOURS = {"24 小時": 24, "7 天": 168, "30 天": 720}
 # ~7 days of forecast rows (2 models x 2 metrics x 48 runs/day) — enough
 # history for the 「上次預測 vs 實際」date picker to have real choices.
@@ -98,6 +165,10 @@ MQTT_USER = os.environ.get("MQTT_USER", "")
 MQTT_PASS = os.environ.get("MQTT_PASS", "")
 DASH_USERNAME = os.environ.get("DASH_USERNAME", "")
 DASH_PASSWORD = os.environ.get("DASH_PASSWORD", "")
+# Only signs the browser-side cookie that remembers each visitor's chosen
+# theme (app.storage.user) — not a secret in the security sense, so a
+# stable default is fine; an operator can still override it.
+STORAGE_SECRET = os.environ.get("STORAGE_SECRET", "aquaponics-dashboard-theme-prefs")
 # Gate the admin page if EITHER is set, so a half-configured pair (one set,
 # one forgotten) still locks the page instead of silently leaving it open.
 ADMIN_AUTH_REQUIRED = bool(DASH_USERNAME or DASH_PASSWORD)
@@ -405,12 +476,23 @@ def nav_bar(current: str, on_refresh, device_id_getter=None) -> None:
 
         return _go
 
+    theme = get_theme()
+    if theme != DEFAULT_THEME:
+        ui.query("body").classes(f"theme-{theme}")
+
+    def pick_theme(name: str):
+        def _pick():
+            set_theme(name)
+            ui.navigate.reload()
+
+        return _pick
+
     # p-0 header: padding lives on each child instead of the header itself.
     # Gradient instead of a flat fill — just a visual refresh, same layout.
     #
     # Nav links live in two different places depending on viewport, each
     # hidden/shown purely with Tailwind's responsive classes (no server-side
-    # device detection): a row under the brand on desktop (`hidden md:flex`
+    # device detection): a row under the brand on desktop (`max-md:hidden`
     # — unchanged from the 2026-10-01 two-row rework), and a bottom
     # `ui.footer()` tab bar on phones (`md:hidden`) — the thumb-reachable,
     # app-style convention, and it frees the header from needing to fit a
@@ -419,9 +501,16 @@ def nav_bar(current: str, on_refresh, device_id_getter=None) -> None:
         with ui.column().classes("w-full gap-0"):
             with ui.row().classes("w-full items-center justify-between flex-nowrap px-4 py-2"):
                 ui.label("💧 AIoT智慧物聯系統").classes("text-lg font-semibold whitespace-nowrap")
-                ui.button(icon="refresh", on_click=on_refresh).props(
-                    "flat round dense color=white"
-                ).classes("shrink-0")
+                with ui.row().classes("items-center gap-0 shrink-0"):
+                    with ui.button(icon="palette").props("flat round dense color=white"):
+                        with ui.menu():
+                            for name, label in THEMES.items():
+                                item = ui.menu_item(label, on_click=pick_theme(name))
+                                if name == theme:
+                                    item.classes("font-bold text-sky-700")
+                    ui.button(icon="refresh", on_click=on_refresh).props(
+                        "flat round dense color=white"
+                    )
             with ui.row().classes(
                 "w-full items-center justify-center flex-wrap gap-1 px-2 pb-2 max-md:hidden"
             ):
@@ -438,9 +527,17 @@ def nav_bar(current: str, on_refresh, device_id_getter=None) -> None:
                         # white/sky highlight below doesn't carry.
                         btn.classes("bg-amber-600 text-white font-bold")
                     else:
-                        btn.classes("bg-white text-sky-700 font-bold")
+                        # Not bg-white: NiceGUI's own base stylesheet forces
+                        # `.bg-white` to literal #fff with !important (a
+                        # layered rule — beats our unlayered !important theme
+                        # override regardless of selector specificity, per
+                        # the CSS cascade-layers spec's reversed importance
+                        # ordering). bg-gray-50 is visually identical in the
+                        # classic theme and isn't specially forced, so our
+                        # theme CSS can actually override it.
+                        btn.classes("bg-gray-50 text-sky-700 font-bold")
 
-    with ui.footer().classes("bg-white text-gray-500 p-0 border-t border-gray-200 md:hidden"):
+    with ui.footer().classes("bg-gray-50 text-gray-500 p-0 border-t border-gray-200 md:hidden"):
         with ui.row().classes("w-full items-stretch justify-around flex-nowrap"):
             for label, path, icon in NAV_LINKS:
                 is_current = path == current
@@ -522,7 +619,7 @@ def main_page(device: str = "") -> None:
                         seen and (datetime.now(timezone.utc) - seen).total_seconds() < 300
                     )
                     sel = did == state["device_id"]
-                    row_bg = "bg-sky-100" if sel else ("bg-sky-50" if i % 2 else "bg-white")
+                    row_bg = "bg-sky-100" if sel else ("bg-sky-50" if i % 2 else "bg-gray-50")
                     cell = f"{row_bg} px-3 py-2 text-sm border-t border-sky-100"
                     with ui.element("div").classes("contents cursor-pointer").on(
                         "click", lambda did=did: select_device(did)
@@ -1388,4 +1485,5 @@ if __name__ in {"__main__", "__mp_main__"}:
         favicon="💧",
         reload=False,
         show=False,
+        storage_secret=STORAGE_SECRET,
     )
