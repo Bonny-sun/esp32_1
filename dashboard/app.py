@@ -60,13 +60,19 @@ COLOR = {
 # keys must match firmware's petSkinFromString()
 PET_LABEL = {"drop": "水滴", "fish": "魚", "cat": "貓", "panda": "熊貓"}
 # Shared "functional block" card look for both the main page and admin page.
-# `flat` drops Quasar's default elevation shadow, which is directional
-# (heavier below than above/left/right) and on a tall card reads as "only
-# the bottom edge has a border" — an explicit border is the same weight on
-# all four sides instead.
-SECTION_CARD_CLASSES = "w-full border-2 border-gray-400"
-# (label, route) in the order they appear in nav_bar()
-NAV_LINKS = [("首頁", "/"), ("異常警戒", "/anomalies"), ("AI預測", "/forecast"), ("後台設定", "/admin")]
+# `flat` drops Quasar's default elevation shadow so only this Tailwind
+# shadow applies (no stacked/doubled shadow) — rounded corners + a soft
+# shadow instead of the old flat hard border, for a more modern card look.
+SECTION_CARD_CLASSES = "w-full rounded-xl shadow-md border border-gray-100"
+# (label, route, icon) in the order they appear in nav_bar() — icon is a
+# Material Symbols name (Quasar's default icon set), used on both the
+# desktop nav row and the mobile bottom tab bar.
+NAV_LINKS = [
+    ("首頁", "/", "home"),
+    ("異常警戒", "/anomalies", "warning"),
+    ("AI預測", "/forecast", "insights"),
+    ("後台設定", "/admin", "settings"),
+]
 RANGE_HOURS = {"24 小時": 24, "7 天": 168, "30 天": 720}
 # ~7 days of forecast rows (2 models x 2 metrics x 48 runs/day) — enough
 # history for the 「上次預測 vs 實際」date picker to have real choices.
@@ -400,27 +406,30 @@ def nav_bar(current: str, on_refresh, device_id_getter=None) -> None:
         return _go
 
     # p-0 header: padding lives on each child instead of the header itself.
+    # Gradient instead of a flat fill — just a visual refresh, same layout.
     #
-    # Two rows instead of one horizontally-scrolling row: brand + refresh
-    # on top, the 4 nav buttons on their own row below, full width. Nothing
-    # to scroll to find, and every button gets a bigger, easier-to-tap
-    # target — the scrolling single-row version (2026-09-30) was harder to
-    # use on a phone than it looked in a desktop screenshot. Row 1 is a
-    # single flat band (no separate darker "chip" box behind the brand
-    # label) — that two-tone split plus the lone refresh icon stranded far
-    # right left a visually heavy block on one side and an awkward empty
-    # gap on the other; balanced padding on one flat row reads calmer.
-    with ui.header().classes("bg-sky-600 text-white p-0"):
+    # Nav links live in two different places depending on viewport, each
+    # hidden/shown purely with Tailwind's responsive classes (no server-side
+    # device detection): a row under the brand on desktop (`hidden md:flex`
+    # — unchanged from the 2026-10-01 two-row rework), and a bottom
+    # `ui.footer()` tab bar on phones (`md:hidden`) — the thumb-reachable,
+    # app-style convention, and it frees the header from needing to fit a
+    # whole second row of buttons on a narrow screen at all.
+    with ui.header().classes("bg-gradient-to-r from-sky-500 to-blue-700 text-white p-0"):
         with ui.column().classes("w-full gap-0"):
             with ui.row().classes("w-full items-center justify-between flex-nowrap px-4 py-2"):
                 ui.label("💧 AIoT智慧物聯系統").classes("text-lg font-semibold whitespace-nowrap")
                 ui.button(icon="refresh", on_click=on_refresh).props(
                     "flat round dense color=white"
                 ).classes("shrink-0")
-            with ui.row().classes("w-full items-center justify-center flex-wrap gap-1 px-2 pb-2"):
-                for label, path in NAV_LINKS:
+            with ui.row().classes(
+                "w-full items-center justify-center flex-wrap gap-1 px-2 pb-2 max-md:hidden"
+            ):
+                for label, path, icon in NAV_LINKS:
                     is_current = path == current
-                    btn = ui.button(label, on_click=go(path)).props("flat").classes("my-1")
+                    btn = ui.button(label, icon=icon, on_click=go(path)).props("flat").classes(
+                        "my-1"
+                    )
                     if not is_current:
                         btn.classes("text-white")
                     elif path == "/anomalies":
@@ -430,6 +439,17 @@ def nav_bar(current: str, on_refresh, device_id_getter=None) -> None:
                         btn.classes("bg-amber-600 text-white font-bold")
                     else:
                         btn.classes("bg-white text-sky-700 font-bold")
+
+    with ui.footer().classes("bg-white text-gray-500 p-0 border-t border-gray-200 md:hidden"):
+        with ui.row().classes("w-full items-stretch justify-around flex-nowrap"):
+            for label, path, icon in NAV_LINKS:
+                is_current = path == current
+                color = "text-sky-600" if is_current else "text-gray-500"
+                with ui.column().classes(
+                    f"items-center justify-center gap-0 py-1 flex-1 cursor-pointer {color}"
+                ).on("click", go(path)):
+                    ui.icon(icon).classes("text-2xl")
+                    ui.label(label).classes("text-[11px] leading-tight font-medium")
 
 
 @ui.page("/", title="💧 AIoT智慧物聯系統 · 首頁")
