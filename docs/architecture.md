@@ -795,3 +795,40 @@ informational, not real threshold breaches.
   purpose. Added a regression test reproducing the exact failure
   (missing-column error on the device query, global set to paused)
   asserting the global setting is honored.
+* **2026-09-30 (later) — nav bar switched to horizontal scroll instead
+  of wrapping on narrow screens.** 品牌區塊 + 4 nav buttons didn't all
+  fit on one line on a phone; the plain `ui.row()` let them wrap to a
+  second line, which looked broken. `flex-nowrap` + `overflow-x-auto`
+  on the row (plus `shrink-0` on every child so buttons keep normal
+  width instead of squeezing) keeps it a single scrollable row at any
+  width.
+* **2026-10-01 — AI 預測總表: gbm sorted above ewma+drift within each
+  device.** Was alphabetical (`sorted(models)`), which put ewma+drift
+  first ("e" < "g") — not the ordering the user wanted to see the
+  stronger challenger model's row first. Added a fixed `MODEL_ORDER`
+  priority used as the sort key instead; any future model name not in
+  that list still sorts alphabetically after both.
+* **2026-10-01 — background cache-warming loop for faster page
+  switches.** User reported pages feeling slow to display after
+  navigating. Root cause: each `@ui.page` is a full server-side
+  re-render, and on a cold `@cached()` entry that chains several
+  blocking per-device Supabase calls — worst is `load_forecast_eval()`,
+  which pages through telemetry to match it against forecasts and can
+  take multiple round trips per device on a wide date range. Since the
+  dashboard runs as an always-on Render instance (not spun up per
+  request), added a background `asyncio` loop that keeps every
+  `load_*()`'s shared cache warm continuously, fetching every device
+  concurrently via `run.io_bound()` + `asyncio.gather()` rather than
+  the page code's own sequential per-device loops. The interval (25s)
+  sits under every cache TTL (30s; 60s for `load_forecast_eval`), so a
+  page visit almost always finds data already warm instead of paying
+  the full chain of round trips on click. Registered via
+  `app.on_startup()` with the loop function itself (not a
+  pre-created task) so NiceGUI's own `background_tasks.create()`
+  manages it — same exception routing and clean shutdown cancellation
+  as any other NiceGUI background task; a failed warm cycle is caught
+  and logged, never kills the loop. Considered and explained to the
+  user as an alternative to a DB-side materialized/precomputed table
+  (the heavier, larger-scale version of the same idea) — deferred
+  until device count grows enough to justify the extra schema and
+  worker-side plumbing.
