@@ -805,6 +805,9 @@ def forecast_page(device: str = "") -> None:
         if not rows:
             ui.label("尚無預測資料。").classes("text-gray-500")
             return
+        # Group by model first (gbm above ewma+drift) rather than by device —
+        # a stable sort keeps each model group's original device/metric order.
+        rows.sort(key=lambda r: _model_sort_key(r["model"]))
         cols = [
             {"name": n, "label": lb, "field": n, "align": "left", "headerClasses": "bg-green text-white"}
             for n, lb in [
