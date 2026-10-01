@@ -832,3 +832,27 @@ informational, not real threshold breaches.
   (the heavier, larger-scale version of the same idea) — deferred
   until device count grows enough to justify the extra schema and
   worker-side plumbing.
+* **2026-10-01 — AI 預測總表: grouped by model instead of by device.**
+  Was device-outer/model-inner (gbm above ewma+drift within each
+  device's block); user wanted all gbm rows together ahead of all
+  ewma+drift rows, so it's now a single stable sort on the already-
+  built row list by `_model_sort_key` alone — device/metric order
+  within each model group falls out of the original build order for
+  free since Python's sort is stable.
+* **2026-10-01 — tables scroll bounded on mobile instead of bleeding
+  past their card.** AI 預測總表 (9 cols), AI預測資料查詢 (7 cols) and
+  異常警戒 (6 cols) don't fit a phone width; without any wrapper a
+  `ui.table()` just overflows past its card's right border with no
+  scroll affordance, which read as broken layout. Wrapped each in a
+  plain `overflow-x-auto` div so the overflow is contained and
+  scrollable within the card, with the browser's native scrollbar as
+  the visible hint.
+* **2026-10-01 — fixed the refresh button landing on its own stranded
+  line on narrow phones.** The 2026-09-30 nav-bar fix (`flex-nowrap` +
+  `overflow-x-auto`) only put `flex-nowrap` on the *inner* row (brand +
+  nav buttons); the outer `ui.header()` — whose children are that row
+  plus the refresh button — still had default flex-wrap, so on a
+  narrow enough screen the header itself wrapped, pushing the refresh
+  button down onto an isolated second line. Added `flex-nowrap` to the
+  header too; the inner row's own `overflow-x-auto` already handles its
+  own overflow, so nothing needs to wrap at either level.
