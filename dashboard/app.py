@@ -13,6 +13,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import secrets
@@ -23,7 +24,7 @@ from urllib.parse import quote
 
 import paho.mqtt.client as mqtt
 import pandas as pd
-from nicegui import run, ui
+from nicegui import app, run, ui
 from supabase import create_client
 
 try:
@@ -1302,6 +1303,51 @@ def admin_page(device: str = "") -> None:
 
     with ui.column().classes("w-full max-w-3xl mx-auto p-4 gap-5"):
         gate_or_content()
+
+
+# ---------------------------------------------------------------- 快取預熱
+# Switching pages re-runs its whole render function, which on a cold cache
+# makes a chain of blocking Supabase calls per device — worst offender is
+# load_forecast_eval(), which pages through telemetry to match it against
+# forecasts. Rather than make the user's click wait on that, a background
+# loop keeps the shared @cached() entries warm continuously (server is an
+# always-on Render instance, not spun up per request), so a page visit
+# almost always finds the data already sitting in cache. Interval is below
+# every load_*'s own TTL (30s, 60s for load_forecast_eval) so a visit is
+# never more than one warm cycle away from fresh data.
+CACHE_WARM_INTERVAL = 25
+
+
+async def _warm_cache_once() -> None:
+    devices = await run.io_bound(load_devices)
+    device_ids = [d["device_id"] for d in devices]
+
+    async def warm_device(did: str) -> None:
+        await run.io_bound(load_history, did, 24)
+        await run.io_bound(load_thresholds, did)
+        await run.io_bound(load_forecasts, did)
+        await run.io_bound(load_forecast_eval, did)
+
+    await asyncio.gather(
+        run.io_bound(load_all_latest),
+        run.io_bound(load_anomalies, None),
+        *(warm_device(did) for did in device_ids),
+    )
+
+
+async def _warm_cache_loop() -> None:
+    while True:
+        try:
+            await _warm_cache_once()
+        except Exception as exc:  # never let a bad cycle kill the loop
+            print(f"[cache warm] cycle failed: {exc}", flush=True)
+        await asyncio.sleep(CACHE_WARM_INTERVAL)
+
+
+# Passing the async function itself (not a task/coroutine) lets NiceGUI
+# wrap it with its own background_tasks.create() — same exception routing
+# and clean cancellation on shutdown as every other NiceGUI background task.
+app.on_startup(_warm_cache_loop)
 
 
 if __name__ in {"__main__", "__mp_main__"}:
