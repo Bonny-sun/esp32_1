@@ -50,6 +50,13 @@ UNIT = {
     "ph": "",
     "soil_moisture": "%",
 }
+ICON = {
+    "temperature": "thermostat",
+    "humidity": "water_drop",
+    "water_temp": "set_meal",
+    "ph": "science",
+    "soil_moisture": "grass",
+}
 COLOR = {
     "temperature": "#ea580c",   # orange
     "humidity": "#0284c7",      # blue
@@ -118,6 +125,12 @@ body.theme-tech .border-sky-100,
 body.theme-tech .border-sky-600 { border-color: #1e3a5f !important; }
 body.theme-tech .text-sky-700,
 body.theme-tech .text-sky-600 { color: #7dd3fc !important; }
+body.theme-tech .q-drawer {
+    background-color: #121a35 !important;
+    border-color: #1e3a5f !important;
+}
+body.theme-tech .bg-amber-100 { background-color: #3a2a0f !important; }
+body.theme-tech .text-amber-700 { color: #fbbf24 !important; }
 body.theme-tech .q-field__control,
 body.theme-tech .q-field__native,
 body.theme-tech .q-field__label,
@@ -489,55 +502,46 @@ def nav_bar(current: str, on_refresh, device_id_getter=None) -> None:
 
     # p-0 header: padding lives on each child instead of the header itself.
     # Gradient instead of a flat fill — just a visual refresh, same layout.
-    #
-    # Nav links live in two different places depending on viewport, each
-    # hidden/shown purely with Tailwind's responsive classes (no server-side
-    # device detection): a row under the brand on desktop (`max-md:hidden`
-    # — unchanged from the 2026-10-01 two-row rework), and a bottom
-    # `ui.footer()` tab bar on phones (`md:hidden`) — the thumb-reachable,
-    # app-style convention, and it frees the header from needing to fit a
-    # whole second row of buttons on a narrow screen at all.
     with ui.header().classes("bg-gradient-to-r from-sky-500 to-blue-700 text-white p-0"):
-        with ui.column().classes("w-full gap-0"):
-            with ui.row().classes("w-full items-center justify-between flex-nowrap px-4 py-2"):
-                ui.label("💧 AIoT智慧物聯系統").classes("text-lg font-semibold whitespace-nowrap")
-                with ui.row().classes("items-center gap-0 shrink-0"):
-                    with ui.button(icon="palette").props("flat round dense color=white"):
-                        with ui.menu():
-                            for name, label in THEMES.items():
-                                item = ui.menu_item(label, on_click=pick_theme(name))
-                                if name == theme:
-                                    item.classes("font-bold text-sky-700")
-                    ui.button(icon="refresh", on_click=on_refresh).props(
-                        "flat round dense color=white"
-                    )
-            with ui.row().classes(
-                "w-full items-center justify-center flex-wrap gap-1 px-2 pb-2 max-md:hidden"
-            ):
-                for label, path, icon in NAV_LINKS:
-                    is_current = path == current
-                    btn = ui.button(label, icon=icon, on_click=go(path)).props("flat").classes(
-                        "my-1"
-                    )
-                    if not is_current:
-                        btn.classes("text-white")
-                    elif path == "/anomalies":
-                        # amber, matching 異常警戒's old standalone page header —
-                        # a visual "this is the alert page" cue the generic
-                        # white/sky highlight below doesn't carry.
-                        btn.classes("bg-amber-600 text-white font-bold")
-                    else:
-                        # Not bg-white: NiceGUI's own base stylesheet forces
-                        # `.bg-white` to literal #fff with !important (a
-                        # layered rule — beats our unlayered !important theme
-                        # override regardless of selector specificity, per
-                        # the CSS cascade-layers spec's reversed importance
-                        # ordering). bg-gray-50 is visually identical in the
-                        # classic theme and isn't specially forced, so our
-                        # theme CSS can actually override it.
-                        btn.classes("bg-gray-50 text-sky-700 font-bold")
+        with ui.row().classes("w-full items-center justify-between flex-nowrap px-4 py-2"):
+            ui.label("💧 AIoT智慧物聯系統").classes("text-lg font-semibold whitespace-nowrap")
+            with ui.row().classes("items-center gap-0 shrink-0"):
+                with ui.button(icon="palette").props("flat round dense color=white"):
+                    with ui.menu():
+                        for name, label in THEMES.items():
+                            item = ui.menu_item(label, on_click=pick_theme(name))
+                            if name == theme:
+                                item.classes("font-bold text-sky-700")
+                ui.button(icon="refresh", on_click=on_refresh).props(
+                    "flat round dense color=white"
+                )
 
-    with ui.footer().classes("bg-gray-50 text-gray-500 p-0 border-t border-gray-200 md:hidden"):
+    # Nav links live in two different places depending on viewport — a
+    # persistent left sidebar on desktop, a bottom `ui.footer()` tab bar on
+    # phones — toggled by Quasar's own breakpoint tracking rather than our
+    # own CSS, since that's what burned us on `hidden md:flex` (see the
+    # 2026-10-01 pitfall entry in docs/architecture.md): leaving `value`
+    # unset makes QDrawer auto-show above its 1024px breakpoint and
+    # auto-hide (with no toggle button, nothing to open it) below, so
+    # there's no screen width with both or neither nav visible. The
+    # footer's own Tailwind breakpoint is `lg:hidden` (1024px) to match.
+    with ui.left_drawer().props("bordered").classes("q-pa-sm"):
+        for label, path, icon in NAV_LINKS:
+            is_current = path == current
+            btn = ui.button(label, icon=icon, on_click=go(path)).props(
+                "flat align=left no-caps"
+            ).classes("w-full justify-start my-1")
+            if not is_current:
+                btn.classes("text-gray-600")
+            elif path == "/anomalies":
+                # amber, matching 異常警戒's old standalone page header — a
+                # visual "this is the alert page" cue the generic sky
+                # highlight below doesn't carry.
+                btn.classes("bg-amber-100 text-amber-700 font-bold")
+            else:
+                btn.classes("bg-sky-100 text-sky-700 font-bold")
+
+    with ui.footer().classes("bg-gray-50 text-gray-500 p-0 border-t border-gray-200 lg:hidden"):
         with ui.row().classes("w-full items-stretch justify-around flex-nowrap"):
             for label, path, icon in NAV_LINKS:
                 is_current = path == current
@@ -1256,14 +1260,16 @@ def admin_page(device: str = "") -> None:
             )
             notify_section.refresh()
 
-        with ui.row().classes("items-center gap-2"):
-            ui.switch(
-                "已關閉 LINE 推播（全域預設）" if paused else "已開啟 LINE 推播（全域預設）",
-                value=not paused,
-                on_change=on_toggle,
-            )
-            if paused:
-                ui.icon("notifications_off").classes("text-amber-500")
+        with ui.row().classes("w-full items-center justify-between"):
+            with ui.column().classes("gap-0"):
+                ui.label("LINE 警示推播").classes("font-medium")
+                ui.label(f"全域預設：{'已關閉' if paused else '已開啟'}").classes(
+                    "text-xs text-gray-400"
+                )
+            with ui.row().classes("items-center gap-1"):
+                if paused:
+                    ui.icon("notifications_off").classes("text-amber-500")
+                ui.switch(value=not paused, on_change=on_toggle)
 
         ui.separator().classes("my-2")
 
@@ -1333,22 +1339,51 @@ def admin_page(device: str = "") -> None:
     def alert_section():
         th = load_thresholds(state["device_id"])
         edits: dict = {}
-        # ui.grid (CSS grid, minmax(0,1fr) columns) shrinks correctly on narrow
-        # screens; a ui.row (flexbox) does not — its items refuse to shrink
-        # below their natural content width and wrap into a ragged 2-line mess.
-        with ui.card().classes("w-full"):
-            with ui.grid(columns=4).classes("w-full gap-x-2 gap-y-2 items-center"):
-                ui.label("項目").classes("font-semibold text-sm")
-                ui.label("下限").classes("font-semibold text-sm")
-                ui.label("上限").classes("font-semibold text-sm")
-                ui.label("啟用").classes("font-semibold text-sm")
-                for m in METRICS:
-                    cur = th.get(m, {})
-                    ui.label(LABEL.get(m, m)).classes("text-sm")
-                    mn = ui.number(value=float(cur.get("min_val") or 0.0), step=0.5).classes("w-full")
-                    mx = ui.number(value=float(cur.get("max_val") or 0.0), step=0.5).classes("w-full")
-                    en = ui.checkbox(value=bool(cur.get("enabled", False)))
-                    edits[m] = (mn, mx, en)
+        # A plain column, not a nested ui.card(): the outer SECTION_CARD_CLASSES
+        # card already provides the border/shadow, and a second card here just
+        # ate an extra ~32px of padding on both sides for nothing — exactly
+        # the padding this row's content needed on a 390px-wide phone screen.
+        with ui.column().classes("w-full gap-0"):
+            for i, m in enumerate(METRICS):
+                cur = th.get(m, {})
+                enabled0 = bool(cur.get("enabled", False))
+                row_classes = "w-full items-center gap-2 py-2 flex-nowrap"
+                if i > 0:
+                    row_classes += " border-t border-gray-100"
+                if not enabled0:
+                    row_classes += " opacity-60"
+                # Every size on the number inputs needs `shrink-0`: a plain
+                # ui.row() is a flexbox, and without it the browser happily
+                # crushes them below their specified width to fit the row's
+                # other content — on a narrow screen that silently clips the
+                # digits to invisibility rather than wrapping, since a
+                # <input type=number> has no line-wrap to fall back to.
+                with ui.row().classes(row_classes) as row:
+                    ui.icon(ICON.get(m, "info")).classes("text-xl text-sky-600 shrink-0")
+                    ui.label(LABEL.get(m, m)).classes("w-16 shrink-0 text-sm font-medium")
+                    mn = ui.number(value=float(cur.get("min_val") or 0.0), step=0.5).props(
+                        "dense"
+                    ).classes("w-14 shrink-0")
+                    ui.label("–").classes("text-gray-400 shrink-0")
+                    mx = ui.number(value=float(cur.get("max_val") or 0.0), step=0.5).props(
+                        "dense"
+                    ).classes("w-14 shrink-0")
+                    if UNIT[m]:
+                        ui.label(UNIT[m]).classes("text-xs text-gray-400 shrink-0 -ml-1")
+                    en = ui.switch(value=enabled0).classes("ml-auto shrink-0")
+                mn.set_enabled(enabled0)
+                mx.set_enabled(enabled0)
+
+                def sync_row(e, mn=mn, mx=mx, row=row):
+                    mn.set_enabled(e.value)
+                    mx.set_enabled(e.value)
+                    if e.value:
+                        row.classes(remove="opacity-60")
+                    else:
+                        row.classes(add="opacity-60")
+
+                en.on_value_change(sync_row)
+                edits[m] = (mn, mx, en)
 
             def do_save(edits=edits):
                 payload = {m: (mn.value, mx.value, en.value) for m, (mn, mx, en) in edits.items()}
@@ -1356,7 +1391,7 @@ def admin_page(device: str = "") -> None:
                 ui.notify("已儲存。", type="positive")
                 alert_section.refresh()
 
-            ui.button("儲存", on_click=do_save)
+            ui.button("儲存", on_click=do_save).classes("mt-2")
         ui.label(
             "雲端每分鐘檢查一次(aqua_check_thresholds),持續超標最多每小時記一筆,"
             "顯示在「異常警戒」的「超出範圍」。"
@@ -1394,17 +1429,18 @@ def admin_page(device: str = "") -> None:
                 ui.button("登入", on_click=try_unlock).classes("w-full").props("color=primary")
             return
 
-        ui.select(
-            ids, value=state["device_id"], label="設定裝置", on_change=on_device_change
-        ).classes("w-56")
+        with ui.card().classes(SECTION_CARD_CLASSES).props("flat"):
+            ui.label("系統設定總覽").classes("text-lg font-semibold")
+            ui.select(
+                ids, value=state["device_id"], label="監測裝置", on_change=on_device_change
+            ).classes("w-full")
 
         with ui.card().classes(SECTION_CARD_CLASSES).props("flat"):
-            ui.label("警戒設定").classes("text-lg font-semibold")
+            ui.label("警戒門檻設定").classes("text-lg font-semibold")
             alert_section()
 
         with ui.card().classes(SECTION_CARD_CLASSES).props("flat"):
-            ui.label("推播設定").classes("text-lg font-semibold")
-            ui.label("開啟或關閉LINE之警戒推播。").classes("text-xs text-gray-400 mb-1")
+            ui.label("推播與警示設定").classes("text-lg font-semibold")
             notify_section()
 
         with ui.card().classes(SECTION_CARD_CLASSES).props("flat"):
