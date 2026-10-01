@@ -856,3 +856,16 @@ informational, not real threshold breaches.
   button down onto an isolated second line. Added `flex-nowrap` to the
   header too; the inner row's own `overflow-x-auto` already handles its
   own overflow, so nothing needs to wrap at either level.
+* **2026-10-01 — nav bar reworked again: back to two full rows instead
+  of one scrolling row.** The single-row + `overflow-x-auto` design
+  (2026-09-30) didn't break layout, but on a phone the nav buttons were
+  easy to miss (had to notice and swipe to find them) and the tap
+  targets were cramped. Reverted to two rows: brand + refresh on top,
+  the 4 nav buttons on their own full-width row below, centered and
+  wrapping if needed — nothing to scroll to find, bigger tap targets.
+  Row 1 also got a follow-up pass: the brand label's own darker
+  `bg-sky-800` chip box, self-stretched to the row's full height, left
+  a visually heavy block on the left with the lone refresh icon
+  stranded in a large empty gap on the right. Dropped the chip in favor
+  of one flat `bg-sky-600` band with matching padding on both ends —
+  calmer and more balanced than the two-tone split.
