@@ -938,3 +938,113 @@ informational, not real threshold breaches.
   from `bg-white` to `bg-gray-50` (visually identical in the classic
   theme, not specially forced) instead of fighting the framework's own
   layered rule.
+* **2026-10-02 — sidebar/nav polish batch (#119-#123).** Five small,
+  independently-reported visual fixes to the nav/sidebar and threshold
+  UI: sidebar nav buttons overflowing their row on narrower widths;
+  sidebar text using a color that lost contrast under the tech theme;
+  threshold rows' label/switch pairs sitting too close together;
+  the theme-picker dropdown menu being hard to read (menu background
+  vs. text color clash) under the tech theme; and the mobile bottom
+  tab bar not making the active tab visually obvious enough. Each was
+  a scoped Tailwind class change at its own call site, not a shared
+  root cause — no structural changes.
+* **2026-10-02 — de-block `admin_page()`'s event loop (#124).** Users
+  reported a recurring "連線問題" (connection issue) when switching
+  pages, on both desktop and mobile, that self-resolved on retry.
+  Root cause: NiceGUI runs the whole app on ONE shared asyncio event
+  loop serving every connected client's websocket. `admin_page()` was
+  calling `load_global_line_paused()`/`load_device_line_paused()`
+  synchronously inside the page-render coroutine — each one a direct,
+  uncached Supabase network call. A blocking call there doesn't just
+  slow down the visiting client; it stalls the shared loop for EVERY
+  client connected at that moment. Fixed by converting `admin_page()`,
+  `notify_section()`, `gate_or_content()`, and their toggle/override
+  handlers to `async def`, with the Supabase calls moved behind
+  `run.io_bound(...)` so they run in a worker thread instead of on the
+  shared loop. Also converted `main_page`/`forecast_page`/
+  `anomalies_page`'s own `load_devices()` call the same way, since they
+  had the identical pattern.
+* **2026-10-02 — 「即將到來的預測」table, and its launch bug (#125,
+  #126).** User pointed out that the AI 預測 page's existing accuracy
+  table only makes sense for *past* forecast targets (it joins each
+  forecast against the actual reading that arrived later) — so a user
+  looking at "now" has no way to see what the model expects *next*.
+  Added a separate "即將到來的預測" section covering only forecasts
+  whose target time hasn't passed yet, with no actual/hit columns.
+  Shipped in #125; immediately reported back as always empty (#126).
+  Root cause: `aqua_forecasts.metric` stores the raw English key
+  exactly as `baseline.py` writes it (`"temperature"`/`"humidity"`),
+  and `load_forecasts()` returns that raw value unconverted — but the
+  new section's filter compared it against the Chinese `LABEL` text,
+  which never matches. `load_forecast_eval()` does the Chinese
+  conversion internally, so the existing accuracy table never hit this.
+  Fixed by filtering/grouping on the raw key throughout and converting
+  to `LABEL.get(m, m)` only at display time.
+  **Pitfall**: the local Playwright mock server's fixture data had
+  (incorrectly) used the Chinese label for `metric`, matching the
+  buggy code and hiding the bug through local testing entirely — it
+  only surfaced in production. Fixed the mock's fixture to use the raw
+  key too, so this class of mismatch is caught locally next time.
+* **2026-10-02 — AI 預測 page reliability arc: five production
+  incidents, one underlying pattern (#127-#131).** Adding real
+  concurrency to the forecast page (prior entries above) traded one
+  bug for a sequence of new ones, each reported by the user from
+  production within hours of the previous fix shipping:
+  - **#127 — 500, "response_timeout of 10.0 seconds exceeded."**
+    Per-device Supabase fetches were `await`ed sequentially in a
+    for-loop; this stopped blocking *other* clients (per #124's fix)
+    but summed every device's wait time onto this page's own build
+    time, which then exceeded `response_timeout` itself. Fixed with
+    `asyncio.gather()` to run every device's fetch concurrently, and
+    raised `response_timeout` 3.0 → 10.0 as margin.
+  - **#128 — the accuracy card going blank for every device at once**
+    whenever any single device's query failed. Plain `asyncio.gather()`
+    re-raises the first exception and discards every other result, so
+    one bad per-device call took the entire section down, not just
+    that device. Fixed with a shared `_gather_per_device()` helper
+    using `asyncio.gather(..., return_exceptions=True)`, substituting
+    an empty DataFrame (and a log line) for any device whose call
+    raised. Verified locally with a mock server that always raises for
+    one of two devices.
+  - **#129 — a bare 500, `httpx.RemoteProtocolError: Server
+    disconnected`.** A genuinely transient fault (Supabase/httpx
+    pooled connections occasionally get closed server-side between
+    requests), not a logic bug, propagating unhandled into NiceGUI's
+    page handler. Fixed with a single retry on `httpx.TransportError`
+    (connection-level failures only — a real 4xx/5xx HTTP response is
+    a different exception class and still raises immediately) inside
+    the shared `cached()` decorator and the one uncached call site that
+    needed it too.
+  - **#130 — the #127 timeout came back, now at 10.0s.** Root cause
+    was deeper than #127's fix addressed: `load_forecast_eval()` scans
+    all telemetry between the oldest and newest forecast's target time
+    to nearest-match each one against an actual reading, paginated
+    1000 rows at a time — a cost proportional to accumulated telemetry
+    volume in that window, which only grows as the deployment keeps
+    running. Mitigated (not architecturally fixed) by shrinking
+    `FORECAST_EVAL_LOOKBACK_ROWS` from 7 days to 3 days of lookback,
+    plus raising `response_timeout` further to 20.0 as defense-in-depth.
+    **Trade-off made unilaterally**: the accuracy table's date range is
+    now shorter than before; a proper fix (concurrent pagination, or a
+    narrower per-target-time query) was considered but not attempted
+    without a way to verify it against live data from this sandbox.
+  - **#131 — one device's data consistently missing from fleet-wide
+    sections, the other always fine**, even with screenshots confirming
+    both devices online with fresh telemetry (ruling out an offline
+    device). The suspiciously stable "first device, every time" pattern
+    pointed at concurrency rather than data. Root cause: a single
+    global `_sb` Supabase client object, now being called concurrently
+    from multiple worker threads (via `asyncio.gather()` +
+    `run.io_bound()`, introduced across #126-#128) — not documented as
+    safe for that usage. Fixed with `threading.local()` so each worker
+    thread gets its own lazily-created client instance, eliminating any
+    shared mutable state to race on.
+    **Pitfall / unverified**: this diagnosis is reasoned from the
+    symptom pattern and code-path timing, not confirmed against the
+    live Supabase project — this sandbox has no network access to it,
+    and the local mock server bypasses `sb()` entirely (it monkeypatches
+    `load_*` functions directly), so this entire class of bug is
+    invisible to local testing by construction. Flagged to the user to
+    confirm by observation after deploy, same as the #126 mock gap
+    above — any future bug that is consistent per-device/per-thread but
+    invisible locally should be suspected of the same root cause.
