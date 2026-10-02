@@ -99,7 +99,7 @@ NAV_LINKS = [
 THEMES = {"classic": "經典藍", "tech": "科技感"}
 DEFAULT_THEME = "classic"
 THEME_CSS = """
-body { background-color: #eef6fc !important; }
+body { background-color: #dbeafe !important; }
 
 body.theme-tech { background-color: #0b1220 !important; color: #e2e8f0 !important; }
 body.theme-tech .q-card {
