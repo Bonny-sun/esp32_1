@@ -129,8 +129,6 @@ body.theme-tech .q-drawer {
     background-color: #121a35 !important;
     border-color: #1e3a5f !important;
 }
-body.theme-tech .bg-amber-100 { background-color: #3a2a0f !important; }
-body.theme-tech .text-amber-700 { color: #fbbf24 !important; }
 body.theme-tech .q-field__control,
 body.theme-tech .q-field__native,
 body.theme-tech .q-field__label,
@@ -537,9 +535,11 @@ def nav_bar(current: str, on_refresh, device_id_getter=None) -> None:
                 # amber, matching 異常警戒's old standalone page header — a
                 # visual "this is the alert page" cue the generic sky
                 # highlight below doesn't carry.
-                btn.classes("bg-amber-100 text-amber-700 font-bold")
+                btn.classes("bg-amber-600 text-white font-bold")
             else:
-                btn.classes("bg-sky-100 text-sky-700 font-bold")
+                # Solid pill, not a pale tint: matches the reference mockup's
+                # nav highlight style.
+                btn.classes("bg-sky-600 text-white font-bold")
 
     with ui.footer().classes("bg-gray-50 text-gray-500 p-0 border-t border-gray-200 lg:hidden"):
         with ui.row().classes("w-full items-stretch justify-around flex-nowrap"):
