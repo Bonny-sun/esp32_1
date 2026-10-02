@@ -127,10 +127,10 @@ body.theme-tech .text-sky-700,
 body.theme-tech .text-sky-600 { color: #7dd3fc !important; }
 body.theme-tech .q-drawer,
 body.theme-tech .q-drawer__content {
-    /* .classes() lands on the inner .q-drawer__content div (it carries our
-       literal bg-blue-700), not the outer <aside class="q-drawer">, so that
-       inner div's opaque background was painting over this override when it
-       only targeted .q-drawer — both need it. */
+    /* .classes()/.style() land on the inner .q-drawer__content div, not the
+       outer <aside class="q-drawer">, so that inner div's opaque background
+       was painting over this override when it only targeted .q-drawer —
+       both need it. */
     background-color: #121a35 !important;
     border-color: #1e3a5f !important;
 }
@@ -504,8 +504,9 @@ def nav_bar(current: str, on_refresh, device_id_getter=None) -> None:
         return _pick
 
     # p-0 header: padding lives on each child instead of the header itself.
-    # Gradient instead of a flat fill — just a visual refresh, same layout.
-    with ui.header().classes("bg-gradient-to-r from-sky-500 to-blue-700 text-white p-0"):
+    # Flat fill matching a reference BI-dashboard mockup's header/sidebar
+    # color scheme (previously a sky-to-blue gradient).
+    with ui.header().classes("bg-blue-500 text-white p-0"):
         with ui.row().classes("w-full items-center justify-between flex-nowrap px-4 py-2"):
             ui.label("💧 AIoT智慧物聯系統").classes("text-lg font-semibold whitespace-nowrap")
             with ui.row().classes("items-center gap-0 shrink-0"):
@@ -528,7 +529,11 @@ def nav_bar(current: str, on_refresh, device_id_getter=None) -> None:
     # auto-hide (with no toggle button, nothing to open it) below, so
     # there's no screen width with both or neither nav visible. The
     # footer's own Tailwind breakpoint is `lg:hidden` (1024px) to match.
-    with ui.left_drawer().props("bordered").classes("q-pa-sm bg-blue-700"):
+    # Exact navy from the same reference mockup — no stock Tailwind shade
+    # lands close enough, hence the inline style instead of a bg-* class.
+    with ui.left_drawer().props("bordered").classes("q-pa-sm").style(
+        "background-color: #16243f"
+    ):
         for label, path, icon in NAV_LINKS:
             is_current = path == current
             btn = ui.button(label, icon=icon, on_click=go(path)).props(
