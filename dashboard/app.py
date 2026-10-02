@@ -861,6 +861,26 @@ async def main_page(device: str = "") -> None:
     ui.timer(60.0, on_refresh_click)
 
 
+async def _gather_per_device(fn, devices: list[dict]) -> list:
+    """Run fn(device_id) for every device concurrently (asyncio.gather), but
+    a device whose call raises doesn't take the other devices down with it —
+    plain asyncio.gather re-raises the first exception and drops every other
+    result, which blanked out an entire fleet-wide section (toggle, select
+    and all) over one device's bad call. Failed devices come back as an
+    empty DataFrame instead, same as a device with genuinely no data."""
+    results = await asyncio.gather(
+        *(run.io_bound(fn, d["device_id"]) for d in devices), return_exceptions=True
+    )
+    out = []
+    for d, r in zip(devices, results, strict=True):
+        if isinstance(r, Exception):
+            print(f"[forecast_page] {fn.__name__}({d['device_id']!r}) failed: {r!r}", flush=True)
+            out.append(pd.DataFrame())
+        else:
+            out.append(r)
+    return out
+
+
 # --------------------------------------------------------------------- AI 預測
 # response_timeout above NiceGUI's 3.0s default: this page's sections
 # each fan out a Supabase call per device (now concurrent via
@@ -925,7 +945,7 @@ async def forecast_page(device: str = "") -> None:
         # section's device loop can run past NiceGUI's 3s response_timeout
         # and this page 500s. gather lets every device's fetch happen at
         # once, so the wait is one round trip long, not N.
-        fcs = await asyncio.gather(*(run.io_bound(load_forecasts, d["device_id"]) for d in devices))
+        fcs = await _gather_per_device(load_forecasts, devices)
         per_device_fc = []
         all_models: set[str] = set()
         for d, fc in zip(devices, fcs, strict=True):
@@ -1018,7 +1038,7 @@ async def forecast_page(device: str = "") -> None:
         # slowest call in this file (pages through telemetry to match
         # forecasts), so this loop was the likeliest one to tip a cold-cache
         # page build past NiceGUI's response_timeout.
-        evs = await asyncio.gather(*(run.io_bound(load_forecast_eval, d["device_id"]) for d in devices))
+        evs = await _gather_per_device(load_forecast_eval, devices)
         per_device_ev = []
         all_models: set[str] = set()
         for d, ev in zip(devices, evs, strict=True):
