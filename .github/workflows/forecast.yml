@@ -13,7 +13,12 @@ name: forecast
 
 on:
   schedule:
-    - cron: "*/30 * * * *"      # every 30 min (UTC); matches the 30-min forecast horizon
+    # Offset from :00/:30 on purpose: GitHub's scheduler is "best effort"
+    # and silently drops ticks under load, and load peaks right at the top
+    # of every hour/half-hour — landing a sub-hourly cron exactly there is
+    # close to a worst case. Observed effect before this change: runs that
+    # should fire every 30 min were actually landing 4-7 hours apart.
+    - cron: "7,37 * * * *"
   workflow_dispatch: {}          # manual "Run workflow" button
 
 concurrency:
