@@ -125,7 +125,12 @@ body.theme-tech .border-sky-100,
 body.theme-tech .border-sky-600 { border-color: #1e3a5f !important; }
 body.theme-tech .text-sky-700,
 body.theme-tech .text-sky-600 { color: #7dd3fc !important; }
-body.theme-tech .q-drawer {
+body.theme-tech .q-drawer,
+body.theme-tech .q-drawer__content {
+    /* .classes() lands on the inner .q-drawer__content div (it carries our
+       literal bg-blue-700), not the outer <aside class="q-drawer">, so that
+       inner div's opaque background was painting over this override when it
+       only targeted .q-drawer — both need it. */
     background-color: #121a35 !important;
     border-color: #1e3a5f !important;
 }
@@ -523,7 +528,7 @@ def nav_bar(current: str, on_refresh, device_id_getter=None) -> None:
     # auto-hide (with no toggle button, nothing to open it) below, so
     # there's no screen width with both or neither nav visible. The
     # footer's own Tailwind breakpoint is `lg:hidden` (1024px) to match.
-    with ui.left_drawer().props("bordered").classes("q-pa-sm bg-slate-800"):
+    with ui.left_drawer().props("bordered").classes("q-pa-sm bg-blue-700"):
         for label, path, icon in NAV_LINKS:
             is_current = path == current
             btn = ui.button(label, icon=icon, on_click=go(path)).props(
