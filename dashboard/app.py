@@ -1362,25 +1362,31 @@ def admin_page(device: str = "") -> None:
                     row_classes += " border-t border-gray-100"
                 if not enabled0:
                     row_classes += " opacity-60"
-                # Every size on the number inputs needs `shrink-0`: a plain
-                # ui.row() is a flexbox, and without it the browser happily
-                # crushes them below their specified width to fit the row's
-                # other content — on a narrow screen that silently clips the
-                # digits to invisibility rather than wrapping, since a
-                # <input type=number> has no line-wrap to fall back to.
+                # The number inputs are allowed to shrink (down to a 32px
+                # floor — still room for 2 digits) instead of being rigidly
+                # fixed: real phones (variable font metrics, text-boosting
+                # on narrow columns, etc.) render this row a bit wider than
+                # this file's own desktop-Chromium test runs do, and a fully
+                # rigid row has no give — the switch at the end is simply
+                # the first thing pushed past the card's edge. Everything
+                # else stays shrink-0 since it's already at its minimum.
                 with ui.row().classes(row_classes) as row:
                     ui.icon(ICON.get(m, "info")).classes("text-xl text-sky-600 shrink-0")
                     ui.label(LABEL.get(m, m)).classes("w-16 shrink-0 text-sm font-medium")
                     mn = ui.number(value=float(cur.get("min_val") or 0.0), step=0.5).props(
                         "dense"
-                    ).classes("w-14 shrink-0")
+                    ).classes("w-14 min-w-[32px]")
                     ui.label("–").classes("text-gray-400 shrink-0")
                     mx = ui.number(value=float(cur.get("max_val") or 0.0), step=0.5).props(
                         "dense"
-                    ).classes("w-14 shrink-0")
+                    ).classes("w-14 min-w-[32px]")
                     if UNIT[m]:
                         ui.label(UNIT[m]).classes("text-xs text-gray-400 shrink-0 -ml-1")
-                    en = ui.switch(value=enabled0).classes("ml-auto shrink-0")
+                    # dense shrinks the switch's touch-target box toward its
+                    # visible track size — without it, the invisible hit-area
+                    # alone was wide enough to tip this row into overflow on
+                    # a narrow screen.
+                    en = ui.switch(value=enabled0).props("dense").classes("ml-auto shrink-0")
                 mn.set_enabled(enabled0)
                 mx.set_enabled(enabled0)
 
