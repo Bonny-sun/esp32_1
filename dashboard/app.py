@@ -894,24 +894,28 @@ async def forecast_page(device: str = "") -> None:
     }
 
     @ui.refreshable
-    def upcoming_section():
+    async def upcoming_section():
         """Fleet-wide, one row per (device, metric, model): the forecast
         whose target time HASN'T arrived yet — what the model is currently
         predicting for ~30 min from now. Mirrors summary_section below, but
         filtered to ts_target > now instead of load_forecast_eval's
         already-matured rows, so there's no 實際/命中 column — nothing to
         compare against until that time actually arrives."""
+        # load_forecasts() returns aqua_forecasts.metric as stored — the raw
+        # key ("temperature"/"humidity"), NOT the Chinese label. Unlike
+        # load_forecast_eval() (used by summary_section below), nothing here
+        # converts it, so filtering/grouping below must compare against
+        # `wanted`/METRICS directly and only map to LABEL for display.
         wanted = METRIC_FILTERS[state["upcoming_metric"]]
-        wanted_labels = [LABEL.get(k, k) for k in wanted]
         now = pd.Timestamp.now(tz=TZ)
 
         per_device_fc = []
         all_models: set[str] = set()
         for d in devices:
-            fc = load_forecasts(d["device_id"])
+            fc = await run.io_bound(load_forecasts, d["device_id"])
             if fc.empty:
                 continue
-            fc = fc[fc["metric"].isin(wanted_labels) & (fc["ts_target"] > now)]
+            fc = fc[fc["metric"].isin(wanted) & (fc["ts_target"] > now)]
             if fc.empty:
                 continue
             per_device_fc.append((d, fc))
@@ -942,8 +946,7 @@ async def forecast_page(device: str = "") -> None:
         for d, fc in per_device_fc:
             did = d["device_id"]
             for m in METRICS:
-                label = LABEL.get(m, m)
-                g_metric = fc[fc["metric"] == label]
+                g_metric = fc[fc["metric"] == m]
                 if g_metric.empty:
                     continue
                 for model_name in sorted(g_metric["model"].unique(), key=_model_sort_key):
@@ -959,7 +962,7 @@ async def forecast_page(device: str = "") -> None:
                         {
                             "device_id": d.get("name") or did,
                             "ts_target": latest["ts_target"].strftime("%m-%d %H:%M"),
-                            "metric": label,
+                            "metric": LABEL.get(m, m),
                             "model": model_name,
                             "yhat": round(float(latest["yhat"]), 1),
                         }
@@ -983,7 +986,7 @@ async def forecast_page(device: str = "") -> None:
             ui.table(columns=cols, rows=table_rows, row_key="_row_id").classes("w-full")
 
     @ui.refreshable
-    def summary_section():
+    async def summary_section():
         """Fleet-wide, one row per (device, metric, model): the single
         latest forecast+actual pair for that combo, plus its aggregate
         平均誤差/命中率 — the same stats already computed per (metric,
@@ -1001,7 +1004,7 @@ async def forecast_page(device: str = "") -> None:
         per_device_ev = []
         all_models: set[str] = set()
         for d in devices:
-            ev = load_forecast_eval(d["device_id"])
+            ev = await run.io_bound(load_forecast_eval, d["device_id"])
             if ev.empty:
                 continue
             ev = ev[ev["metric"].isin(wanted_labels)]
@@ -1089,8 +1092,8 @@ async def forecast_page(device: str = "") -> None:
             ui.table(columns=cols, rows=table_rows, row_key="_row_id").classes("w-full")
 
     @ui.refreshable
-    def forecast_section():
-        fc = load_forecasts(state["device_id"])
+    async def forecast_section():
+        fc = await run.io_bound(load_forecasts, state["device_id"])
         if fc.empty:
             ui.label(
                 "尚無預測。執行 analysis/baseline.py（或等排程）後會出現。"
@@ -1099,7 +1102,7 @@ async def forecast_page(device: str = "") -> None:
         wanted = METRIC_FILTERS[state["fc_metric"]]
         wanted_labels = [LABEL.get(k, k) for k in wanted]
 
-        ev_all = load_forecast_eval(state["device_id"])
+        ev_all = await run.io_bound(load_forecast_eval, state["device_id"])
         if not ev_all.empty:
             ev_all = ev_all[ev_all["metric"].isin(wanted_labels)]
         if ev_all.empty:
@@ -1203,7 +1206,7 @@ async def forecast_page(device: str = "") -> None:
                 "依裝置、溫/溼度、模型顯示下一筆即將到期(約30分鐘後)的AI預測值，"
                 "目標時間尚未到達，還沒有實際量測值可比對。"
             ).classes("text-sm text-gray-500")
-            upcoming_section()
+            await upcoming_section()
 
         with ui.card().classes(SECTION_CARD_CLASSES).props("flat"):
             ui.label("AI 預測準確度").classes("text-lg font-semibold")
@@ -1211,7 +1214,7 @@ async def forecast_page(device: str = "") -> None:
                 "依裝置、溫/溼度、模型顯示最新一筆已到期的AI預測資料，"
                 "並與實際量測值做比較，評估誤差及命中率。"
             ).classes("text-sm text-gray-500")
-            summary_section()
+            await summary_section()
 
         with ui.card().classes(SECTION_CARD_CLASSES).props("flat"):
             ui.label("AI預測資料查詢").classes("text-lg font-semibold")
@@ -1221,7 +1224,7 @@ async def forecast_page(device: str = "") -> None:
                 value=state["fc_metric"],
                 on_change=on_fc_metric_change,
             ).props("toggle-color=green")
-            forecast_section()
+            await forecast_section()
 
     ui.timer(60.0, on_refresh_click)
 
