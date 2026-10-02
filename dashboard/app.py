@@ -1273,7 +1273,11 @@ def admin_page(device: str = "") -> None:
             )
             notify_section.refresh()
 
-        with ui.row().classes("w-full items-center justify-between"):
+        # No justify-between: on a wide desktop card that stretches the
+        # switch all the way to the far right edge, well past the label it
+        # belongs to. A plain row hugs the switch right next to its text
+        # instead, at a normal gap.
+        with ui.row().classes("items-center gap-4"):
             with ui.column().classes("gap-0"):
                 ui.label("LINE 警示推播").classes("font-medium")
                 ui.label(f"全域預設：{'已關閉' if paused else '已開啟'}").classes(
@@ -1383,13 +1387,22 @@ def admin_page(device: str = "") -> None:
                     mx = ui.number(value=float(cur.get("max_val") or 0.0), step=0.5).props(
                         "dense"
                     ).classes("w-14 min-w-[32px]")
-                    if UNIT[m]:
-                        ui.label(UNIT[m]).classes("text-xs text-gray-400 shrink-0 -ml-1")
+                    # Fixed width (not just "render it if present"): pH has
+                    # no unit, and without a same-size placeholder for it,
+                    # that row's switch would land in a different column
+                    # than the rest, since nothing after this point has a
+                    # fixed width of its own to re-align on.
+                    ui.label(UNIT[m]).classes("text-xs text-gray-400 shrink-0 -ml-1 w-8")
                     # dense shrinks the switch's touch-target box toward its
                     # visible track size — without it, the invisible hit-area
                     # alone was wide enough to tip this row into overflow on
-                    # a narrow screen.
-                    en = ui.switch(value=enabled0).props("dense").classes("ml-auto shrink-0")
+                    # a narrow screen. ml-4 (not ml-auto): auto pushed the
+                    # switch all the way to the card's far right edge on a
+                    # wide desktop card, well past the controls it belongs
+                    # to — a fixed gap keeps it right next to them instead,
+                    # while the fixed-width unit label above still keeps
+                    # every row's switch in the same column.
+                    en = ui.switch(value=enabled0).props("dense").classes("ml-4 shrink-0")
                 mn.set_enabled(enabled0)
                 mx.set_enabled(enabled0)
 
