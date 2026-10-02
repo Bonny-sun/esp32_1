@@ -862,7 +862,13 @@ async def main_page(device: str = "") -> None:
 
 
 # --------------------------------------------------------------------- AI 預測
-@ui.page("/forecast", title="🔮 AIoT智慧物聯系統 · AI 預測")
+# response_timeout above NiceGUI's 3.0s default: this page's sections
+# each fan out a Supabase call per device (now concurrent via
+# asyncio.gather, but still one real round trip) and load_forecast_eval
+# pages through telemetry on top of that — on a cold cache (e.g. just
+# after a deploy, before the warm loop's first cycle) the page has 500'd
+# with "took longer than response_timeout of 3.0 seconds to build".
+@ui.page("/forecast", title="🔮 AIoT智慧物聯系統 · AI 預測", response_timeout=10.0)
 async def forecast_page(device: str = "") -> None:
     """AI 預測 used to live as a section on the main page; moved to its own
     route for the same reason 全部異常 did — a first-class nav destination
@@ -909,10 +915,20 @@ async def forecast_page(device: str = "") -> None:
         wanted = METRIC_FILTERS[state["upcoming_metric"]]
         now = pd.Timestamp.now(tz=TZ)
 
+        # Concurrent, not sequential: this await was added to stop a direct
+        # Supabase call from blocking NiceGUI's shared event loop for every
+        # connected client (see the admin-page fix), but one run.io_bound
+        # per device awaited one at a time in a loop just moves the same
+        # total wait onto THIS page's own build time instead — on a cold
+        # cache (e.g. right after a deploy, before the 25s warm loop's
+        # first cycle) that chain of real network round trips across every
+        # section's device loop can run past NiceGUI's 3s response_timeout
+        # and this page 500s. gather lets every device's fetch happen at
+        # once, so the wait is one round trip long, not N.
+        fcs = await asyncio.gather(*(run.io_bound(load_forecasts, d["device_id"]) for d in devices))
         per_device_fc = []
         all_models: set[str] = set()
-        for d in devices:
-            fc = await run.io_bound(load_forecasts, d["device_id"])
+        for d, fc in zip(devices, fcs, strict=True):
             if fc.empty:
                 continue
             fc = fc[fc["metric"].isin(wanted) & (fc["ts_target"] > now)]
@@ -997,14 +1013,15 @@ async def forecast_page(device: str = "") -> None:
         wanted = METRIC_FILTERS[state["summary_metric"]]
         wanted_labels = [LABEL.get(k, k) for k in wanted]
 
-        # Gather each device's metric-filtered eval frame once, both to
-        # build the rows below and to know which models actually have
-        # data (for the 模型 select's options) before applying that
-        # filter.
+        # Concurrent (asyncio.gather), not one await per device in a loop —
+        # see upcoming_section's note above; load_forecast_eval is the
+        # slowest call in this file (pages through telemetry to match
+        # forecasts), so this loop was the likeliest one to tip a cold-cache
+        # page build past NiceGUI's response_timeout.
+        evs = await asyncio.gather(*(run.io_bound(load_forecast_eval, d["device_id"]) for d in devices))
         per_device_ev = []
         all_models: set[str] = set()
-        for d in devices:
-            ev = await run.io_bound(load_forecast_eval, d["device_id"])
+        for d, ev in zip(devices, evs, strict=True):
             if ev.empty:
                 continue
             ev = ev[ev["metric"].isin(wanted_labels)]
