@@ -559,16 +559,43 @@ def nav_bar(current: str, on_refresh, device_id_getter=None) -> None:
                 # nav highlight style.
                 btn.classes("bg-sky-600 text-white font-bold")
 
-    with ui.footer().classes("bg-gray-50 text-gray-500 p-0 border-t border-gray-200 lg:hidden"):
-        with ui.row().classes("w-full items-stretch justify-around flex-nowrap"):
+    # overflow-visible on both levels: the active tab's pill is taller than
+    # the bar via a negative margin (it visibly pokes up above the footer's
+    # top edge, like a raised FAB), and Quasar's own footer/row would
+    # otherwise clip that overflow since nothing here asked it not to.
+    with ui.footer().classes(
+        "bg-gray-50 text-gray-500 p-0 border-t border-gray-200 lg:hidden overflow-visible"
+    ):
+        # px-2: the active pill is content-width, not flex-1 like its
+        # siblings, so when it's the first or last item (首頁 / 後台設定)
+        # the flex-1 items next to it consume 100% of the remaining space,
+        # leaving justify-around nothing to distribute at that edge — the
+        # pill ends up flush against the screen edge with zero margin.
+        with ui.row().classes(
+            "w-full items-end justify-around flex-nowrap overflow-visible px-2"
+        ):
             for label, path, icon in NAV_LINKS:
                 is_current = path == current
-                color = "text-sky-600" if is_current else "text-gray-500"
-                with ui.column().classes(
-                    f"items-center justify-center gap-0 py-1 flex-1 cursor-pointer {color}"
-                ).on("click", go(path)):
-                    ui.icon(icon).classes("text-2xl")
-                    ui.label(label).classes("text-[11px] leading-tight font-medium")
+                if is_current:
+                    # Solid raised pill, not just a text-color change: plain
+                    # color alone wasn't prominent enough on the small
+                    # footer icons. Same color choice as the desktop
+                    # sidebar's active pill (amber for 異常警戒, sky for
+                    # everything else) for a consistent "this is current"
+                    # cue across both nav styles.
+                    pill = "bg-amber-600" if path == "/anomalies" else "bg-sky-600"
+                    with ui.column().classes(
+                        f"items-center justify-center gap-0 py-2 px-4 -mt-3 cursor-pointer "
+                        f"{pill} text-white rounded-2xl shadow-lg"
+                    ).on("click", go(path)):
+                        ui.icon(icon).classes("text-2xl")
+                        ui.label(label).classes("text-[11px] leading-tight font-bold")
+                else:
+                    with ui.column().classes(
+                        "items-center justify-center gap-0 py-2 flex-1 cursor-pointer text-gray-500"
+                    ).on("click", go(path)):
+                        ui.icon(icon).classes("text-2xl")
+                        ui.label(label).classes("text-[11px] leading-tight font-medium")
 
 
 @ui.page("/", title="💧 AIoT智慧物聯系統 · 首頁")
