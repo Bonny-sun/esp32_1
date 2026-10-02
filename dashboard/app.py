@@ -523,14 +523,14 @@ def nav_bar(current: str, on_refresh, device_id_getter=None) -> None:
     # auto-hide (with no toggle button, nothing to open it) below, so
     # there's no screen width with both or neither nav visible. The
     # footer's own Tailwind breakpoint is `lg:hidden` (1024px) to match.
-    with ui.left_drawer().props("bordered").classes("q-pa-sm"):
+    with ui.left_drawer().props("bordered").classes("q-pa-sm bg-slate-800"):
         for label, path, icon in NAV_LINKS:
             is_current = path == current
             btn = ui.button(label, icon=icon, on_click=go(path)).props(
                 "flat align=left no-caps"
             ).classes("w-full justify-start my-1")
             if not is_current:
-                btn.classes("text-gray-600")
+                btn.classes("text-gray-300")
             elif path == "/anomalies":
                 # amber, matching 異常警戒's old standalone page header — a
                 # visual "this is the alert page" cue the generic sky
