@@ -18,6 +18,7 @@ import json
 import os
 import secrets
 import ssl
+import threading
 import time
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
@@ -201,14 +202,23 @@ STORAGE_SECRET = os.environ.get("STORAGE_SECRET", "aquaponics-dashboard-theme-pr
 # one forgotten) still locks the page instead of silently leaving it open.
 ADMIN_AUTH_REQUIRED = bool(DASH_USERNAME or DASH_PASSWORD)
 
-_sb = None
+# One client per worker thread, not one shared global — run.io_bound()
+# calls now fire genuinely concurrently (asyncio.gather across devices),
+# each landing on a different thread from NiceGUI's executor pool, and a
+# single shared supabase/postgrest/httpx client object isn't documented as
+# safe for that: one of two concurrent per-device calls was consistently
+# losing/corrupting its result (first device always missing from a
+# fleet-wide table, second always fine) once per-device fetches actually
+# started overlapping in time. threading.local() gives each worker thread
+# its own client, created once and reused for that thread's later calls —
+# no shared mutable state to race on, no extra client created per call.
+_sb_local = threading.local()
 
 
 def sb():
-    global _sb
-    if _sb is None:
-        _sb = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_KEY"])
-    return _sb
+    if not hasattr(_sb_local, "client"):
+        _sb_local.client = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_KEY"])
+    return _sb_local.client
 
 
 # ---------------------------------------------------------------- 簡易快取
