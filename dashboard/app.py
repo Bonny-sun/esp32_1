@@ -540,7 +540,10 @@ def nav_bar(current: str, on_refresh, device_id_getter=None) -> None:
                 "flat align=left no-caps"
             ).classes("w-full justify-start my-1")
             if not is_current:
-                btn.classes("text-gray-300")
+                # Default to white, not a dimmed gray: matches the reference
+                # mockup, where only the active item gets a colored
+                # highlight and everything else stays plain white text.
+                btn.classes("text-white")
             elif path == "/anomalies":
                 # amber, matching 異常警戒's old standalone page header — a
                 # visual "this is the alert page" cue the generic sky
