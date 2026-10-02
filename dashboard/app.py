@@ -141,6 +141,11 @@ body.theme-tech .q-field__marginal { background-color: transparent !important; c
 body.theme-tech table, body.theme-tech .q-table,
 body.theme-tech .q-table__container { background-color: #121a35 !important; color: #e2e8f0 !important; }
 body.theme-tech .q-table tbody tr:nth-child(even) { background-color: #16204a !important; }
+/* QMenu popups (e.g. the theme picker) keep their native white background —
+   nothing above restyles them — but without this they still inherit the
+   page-wide light text color meant for the dark page behind them, making
+   unselected items nearly invisible against the popup's white background. */
+body.theme-tech .q-menu { color: #1e293b !important; }
 """
 
 
