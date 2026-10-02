@@ -22,6 +22,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
 
+import httpx
 import paho.mqtt.client as mqtt
 import pandas as pd
 from nicegui import app, run, ui
@@ -218,7 +219,20 @@ def cached(ttl: float):
             hit = _cache.get(key)
             if hit and now - hit[0] < ttl:
                 return hit[1]
-            val = fn(*args, **kwargs)
+            # One retry on a dropped/reset connection (httpx.TransportError:
+            # RemoteProtocolError, timeouts, connect errors) — Supabase's
+            # pooled connections occasionally get closed server-side between
+            # requests, and without this a single such blip raised all the
+            # way up through NiceGUI's page handler as an unhandled
+            # exception, 500ing the whole page instead of just retrying a
+            # cheap GET. A real HTTP error status (4xx/5xx) is a different
+            # exception type and still raises immediately — this only
+            # catches the connection itself failing, not a valid response.
+            try:
+                val = fn(*args, **kwargs)
+            except httpx.TransportError:
+                time.sleep(0.5)
+                val = fn(*args, **kwargs)
             _cache[key] = (now, val)
             return val
 
@@ -389,8 +403,16 @@ def load_forecast_eval(device_id: str, limit: int = FORECAST_EVAL_LOOKBACK_ROWS)
 
 def load_global_line_paused() -> bool:
     """Not @cached — this is a manual on/off switch the user just clicked
-    on this same page, so it must read back exactly what was written."""
-    rows = sb().table("aqua_settings").select("value").eq("key", "line_push_paused").execute().data
+    on this same page, so it must read back exactly what was written.
+    One retry on a dropped connection, same as cached() — falling back to
+    a default here (e.g. "not paused") on a transient network blip could
+    silently re-enable pushes the user explicitly turned off, so a genuine
+    read is worth one retry rather than swallowing the error."""
+    try:
+        rows = sb().table("aqua_settings").select("value").eq("key", "line_push_paused").execute().data
+    except httpx.TransportError:
+        time.sleep(0.5)
+        rows = sb().table("aqua_settings").select("value").eq("key", "line_push_paused").execute().data
     return bool(rows and rows[0]["value"])
 
 
