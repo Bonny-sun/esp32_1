@@ -599,10 +599,10 @@ def nav_bar(current: str, on_refresh, device_id_getter=None) -> None:
 
 
 @ui.page("/", title="💧 AIoT智慧物聯系統 · 首頁")
-def main_page(device: str = "") -> None:
+async def main_page(device: str = "") -> None:
     ui.colors(primary="#0284c7", secondary="#0891b2", accent="#22c55e", positive="#22c55e")
 
-    devices = load_devices()
+    devices = await run.io_bound(load_devices)
 
     if not devices:
         with ui.column().classes("w-full items-center gap-3 p-16"):
@@ -863,14 +863,14 @@ def main_page(device: str = "") -> None:
 
 # --------------------------------------------------------------------- AI 預測
 @ui.page("/forecast", title="🔮 AIoT智慧物聯系統 · AI 預測")
-def forecast_page(device: str = "") -> None:
+async def forecast_page(device: str = "") -> None:
     """AI 預測 used to live as a section on the main page; moved to its own
     route for the same reason 全部異常 did — a first-class nav destination
     instead of one more thing to scroll past on 首頁. Per-device (unlike
     /anomalies), so it keeps its own device selector, mirroring /admin's."""
     ui.colors(primary="#0284c7", secondary="#0891b2", accent="#22c55e", positive="#22c55e")
 
-    devices = load_devices()
+    devices = await run.io_bound(load_devices)
     if not devices:
         with ui.column().classes("w-full items-center gap-3 p-16"):
             ui.icon("warning", size="xl").classes("text-amber-500")
@@ -1124,7 +1124,7 @@ def forecast_page(device: str = "") -> None:
 
 # ------------------------------------------------------------- 全部異常(跨裝置)
 @ui.page("/anomalies", title="🚨 AIoT智慧物聯系統 · 異常警戒")
-def anomalies_page() -> None:
+async def anomalies_page() -> None:
     """Fleet-wide alarm list: every device mixed into one table, sorted by
     time, independent of any single-device selection (same idea as
     Grafana/Zabbix separating Alerting from a host's own dashboard). Its
@@ -1134,7 +1134,7 @@ def anomalies_page() -> None:
     ground for every device at once."""
     ui.colors(primary="#0284c7", secondary="#0891b2", accent="#22c55e", positive="#22c55e")
 
-    devices = load_devices()
+    devices = await run.io_bound(load_devices)
     if not devices:
         with ui.column().classes("w-full items-center gap-3 p-16"):
             ui.icon("warning", size="xl").classes("text-amber-500")
@@ -1266,7 +1266,7 @@ def anomalies_page() -> None:
 
 # ---------------------------------------------------------------- 管理後台
 @ui.page("/admin", title="⚙️ AIoT智慧物聯系統 · 後台設定")
-def admin_page(device: str = "") -> None:
+async def admin_page(device: str = "") -> None:
     """所有需要設定/會改變裝置或雲端行為的功能都集中在這裡:推播設定、
     顯示設定(OLED 虛擬寵物)、警戒設定。主頁維持純檢視,不放任何設定。
 
@@ -1277,7 +1277,7 @@ def admin_page(device: str = "") -> None:
     between them."""
     ui.colors(primary="#0284c7", secondary="#0891b2", accent="#22c55e", positive="#22c55e")
 
-    devices = load_devices()
+    devices = await run.io_bound(load_devices)
     if not devices:
         with ui.column().classes("w-full items-center gap-3 p-16"):
             ui.icon("warning", size="xl").classes("text-amber-500")
@@ -1293,12 +1293,22 @@ def admin_page(device: str = "") -> None:
     OVERRIDE_LABEL = {"default": "跟隨全域設定", "pause": "強制暫停", "on": "強制開啟"}
     OVERRIDE_TO_VALUE = {"default": None, "pause": True, "on": False}
 
+    # notify_section and its two Supabase calls below are deliberately async:
+    # load_global_line_paused/load_device_line_paused aren't @cached (see
+    # their own docstrings — they must read back exactly what was just
+    # written), so unlike every other load_*() in this file they hit
+    # Supabase directly on every single visit to this page, with nothing to
+    # warm them. Calling them synchronously blocked NiceGUI's one shared
+    # event loop for that round-trip — stalling the websocket ping/pong of
+    # every other connected client (web or mobile) at the same time,
+    # regardless of which page they were on. That matched a real complaint:
+    # frequent "connection lost" reports whenever anyone switched pages.
     @ui.refreshable
-    def notify_section():
-        paused = load_global_line_paused()
+    async def notify_section():
+        paused = await run.io_bound(load_global_line_paused)
 
-        def on_toggle(e):
-            set_global_line_paused(not e.value)
+        async def on_toggle(e):
+            await run.io_bound(set_global_line_paused, not e.value)
             ui.notify(
                 "已開啟 LINE 推播（全域）" if e.value else "已關閉 LINE 推播（全域）",
                 type="positive" if e.value else "warning",
@@ -1323,12 +1333,12 @@ def admin_page(device: str = "") -> None:
         ui.separator().classes("my-2")
 
         device_id = state["device_id"]
-        override = load_device_line_paused(device_id)
+        override = await run.io_bound(load_device_line_paused, device_id)
         override_key = "default" if override is None else ("pause" if override else "on")
 
-        def on_override_change(e, device_id=device_id):
+        async def on_override_change(e, device_id=device_id):
             try:
-                set_device_line_paused(device_id, OVERRIDE_TO_VALUE[e.value])
+                await run.io_bound(set_device_line_paused, device_id, OVERRIDE_TO_VALUE[e.value])
             except Exception as exc:
                 ui.notify(f"更新失敗：{exc}", type="negative")
                 return
@@ -1468,7 +1478,7 @@ def admin_page(device: str = "") -> None:
         alert_section.refresh()
 
     @ui.refreshable
-    def gate_or_content():
+    async def gate_or_content():
         if ADMIN_AUTH_REQUIRED and not state["unlocked"]:
             with ui.card().classes("w-full max-w-sm mx-auto mt-10 items-center gap-3 p-6"):
                 ui.icon("lock", size="xl").classes("text-gray-400")
@@ -1505,7 +1515,7 @@ def admin_page(device: str = "") -> None:
 
         with ui.card().classes(SECTION_CARD_CLASSES).props("flat"):
             ui.label("推播與警示設定").classes("text-lg font-semibold")
-            notify_section()
+            await notify_section()
 
         with ui.card().classes(SECTION_CARD_CLASSES).props("flat"):
             ui.label("裝置面板顯示設定").classes("text-lg font-semibold")
@@ -1530,7 +1540,7 @@ def admin_page(device: str = "") -> None:
     nav_bar("/admin", on_refresh_click, lambda: state["device_id"])
 
     with ui.column().classes("w-full max-w-3xl mx-auto p-4 gap-5"):
-        gate_or_content()
+        await gate_or_content()
 
 
 # ---------------------------------------------------------------- 快取預熱
