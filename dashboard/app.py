@@ -163,9 +163,15 @@ def set_theme(name: str) -> None:
 
 ui.add_head_html(f"<style>{THEME_CSS}</style>", shared=True)
 RANGE_HOURS = {"24 小時": 24, "7 天": 168, "30 天": 720}
-# ~7 days of forecast rows (2 models x 2 metrics x 48 runs/day) — enough
+# ~3 days of forecast rows (2 models x 2 metrics x 48 runs/day) — enough
 # history for the 「上次預測 vs 實際」date picker to have real choices.
-FORECAST_EVAL_LOOKBACK_ROWS = 2 * 2 * 48 * 7
+# Was 7 days; load_forecast_eval() below pages through every telemetry row
+# in this whole span to match against it (roughly 1/min from the device),
+# so widening this window directly multiplies how many sequential Supabase
+# round trips that pagination loop needs. After weeks of continuous
+# telemetry, 7 days' worth was enough round trips on its own to push
+# /forecast's page build past even a 10s response_timeout and 500 the page.
+FORECAST_EVAL_LOOKBACK_ROWS = 2 * 2 * 48 * 3
 METRIC_FILTERS = {  # 「近期異常」「上次預測 vs 實際」的項目篩選
     "溫度": ["temperature"],
     "濕度": ["humidity"],
@@ -904,13 +910,16 @@ async def _gather_per_device(fn, devices: list[dict]) -> list:
 
 
 # --------------------------------------------------------------------- AI 預測
-# response_timeout above NiceGUI's 3.0s default: this page's sections
-# each fan out a Supabase call per device (now concurrent via
-# asyncio.gather, but still one real round trip) and load_forecast_eval
-# pages through telemetry on top of that — on a cold cache (e.g. just
-# after a deploy, before the warm loop's first cycle) the page has 500'd
-# with "took longer than response_timeout of 3.0 seconds to build".
-@ui.page("/forecast", title="🔮 AIoT智慧物聯系統 · AI 預測", response_timeout=10.0)
+# response_timeout well above NiceGUI's 3.0s default: this page's sections
+# each fan out a Supabase call per device (concurrent via asyncio.gather,
+# but still one real round trip), and load_forecast_eval pages through
+# every telemetry row in its lookback window on top of that — sequential
+# round trips that grow with however much telemetry has accumulated.
+# 10.0s still wasn't enough once weeks of continuous telemetry built up
+# (shrunk the lookback window itself above — FORECAST_EVAL_LOOKBACK_ROWS —
+# but keeping this generous too, as a second line of defense rather than
+# chasing an exact number against a cost that keeps growing over time).
+@ui.page("/forecast", title="🔮 AIoT智慧物聯系統 · AI 預測", response_timeout=20.0)
 async def forecast_page(device: str = "") -> None:
     """AI 預測 used to live as a section on the main page; moved to its own
     route for the same reason 全部異常 did — a first-class nav destination
