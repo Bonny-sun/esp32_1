@@ -880,6 +880,8 @@ async def forecast_page(device: str = "") -> None:
     ids = [d["device_id"] for d in devices]
     state = {
         "device_id": device if device in ids else ids[0],
+        "upcoming_metric": "溫度",
+        "upcoming_model": "全部",
         "summary_metric": "溫度",
         "summary_model": "全部",
         "fc_metric": "溫溼度",
@@ -890,6 +892,95 @@ async def forecast_page(device: str = "") -> None:
         "fc_date": (datetime.now(timezone.utc) + timedelta(hours=8)).strftime("%Y-%m-%d"),
         "fc_model": "全部",
     }
+
+    @ui.refreshable
+    def upcoming_section():
+        """Fleet-wide, one row per (device, metric, model): the forecast
+        whose target time HASN'T arrived yet — what the model is currently
+        predicting for ~30 min from now. Mirrors summary_section below, but
+        filtered to ts_target > now instead of load_forecast_eval's
+        already-matured rows, so there's no 實際/命中 column — nothing to
+        compare against until that time actually arrives."""
+        wanted = METRIC_FILTERS[state["upcoming_metric"]]
+        wanted_labels = [LABEL.get(k, k) for k in wanted]
+        now = pd.Timestamp.now(tz=TZ)
+
+        per_device_fc = []
+        all_models: set[str] = set()
+        for d in devices:
+            fc = load_forecasts(d["device_id"])
+            if fc.empty:
+                continue
+            fc = fc[fc["metric"].isin(wanted_labels) & (fc["ts_target"] > now)]
+            if fc.empty:
+                continue
+            per_device_fc.append((d, fc))
+            all_models.update(fc["model"].unique())
+
+        model_options = ["全部"] + sorted(all_models)
+        if state["upcoming_model"] not in model_options:
+            state["upcoming_model"] = "全部"
+
+        def on_upcoming_model_change(e):
+            state["upcoming_model"] = e.value
+            upcoming_section.refresh()
+
+        with ui.row().classes("items-center gap-4"):
+            ui.toggle(
+                list(METRIC_FILTERS.keys()),
+                value=state["upcoming_metric"],
+                on_change=on_upcoming_metric_change,
+            ).props("toggle-color=green")
+            ui.select(
+                model_options,
+                value=state["upcoming_model"],
+                label="模型",
+                on_change=on_upcoming_model_change,
+            ).classes("w-40")
+
+        rows = []
+        for d, fc in per_device_fc:
+            did = d["device_id"]
+            for m in METRICS:
+                label = LABEL.get(m, m)
+                g_metric = fc[fc["metric"] == label]
+                if g_metric.empty:
+                    continue
+                for model_name in sorted(g_metric["model"].unique(), key=_model_sort_key):
+                    if state["upcoming_model"] != "全部" and model_name != state["upcoming_model"]:
+                        continue
+                    g = g_metric[g_metric["model"] == model_name]
+                    # Soonest still-upcoming target, not the newest row —
+                    # with the warm-cache loop's TTL, a stale-looking older
+                    # run could otherwise outrank the one that actually
+                    # matters right now.
+                    latest = g.sort_values("ts_target").iloc[0]
+                    rows.append(
+                        {
+                            "device_id": d.get("name") or did,
+                            "ts_target": latest["ts_target"].strftime("%m-%d %H:%M"),
+                            "metric": label,
+                            "model": model_name,
+                            "yhat": round(float(latest["yhat"]), 1),
+                        }
+                    )
+        if not rows:
+            ui.label("尚無即將到期的預測資料。").classes("text-gray-500")
+            return
+        rows.sort(key=lambda r: _model_sort_key(r["model"]))
+        cols = [
+            {"name": n, "label": lb, "field": n, "align": "left", "headerClasses": "bg-green text-white"}
+            for n, lb in [
+                ("device_id", "裝置名稱"),
+                ("ts_target", "目標時間"),
+                ("metric", "項目"),
+                ("model", "模型"),
+                ("yhat", "預測值"),
+            ]
+        ]
+        table_rows = [{**r, "_row_id": i} for i, r in enumerate(rows)]
+        with ui.element("div").classes("w-full overflow-x-auto"):
+            ui.table(columns=cols, rows=table_rows, row_key="_row_id").classes("w-full")
 
     @ui.refreshable
     def summary_section():
@@ -1081,6 +1172,10 @@ async def forecast_page(device: str = "") -> None:
         with ui.element("div").classes("w-full overflow-x-auto"):
             ui.table(columns=cols, rows=rows, row_key="_row_id").classes("w-full")
 
+    def on_upcoming_metric_change(e):
+        state["upcoming_metric"] = e.value
+        upcoming_section.refresh()
+
     def on_summary_metric_change(e):
         state["summary_metric"] = e.value
         summary_section.refresh()
@@ -1095,6 +1190,7 @@ async def forecast_page(device: str = "") -> None:
 
     def on_refresh_click():
         clear_cache()
+        upcoming_section.refresh()
         summary_section.refresh()
         forecast_section.refresh()
 
@@ -1102,9 +1198,17 @@ async def forecast_page(device: str = "") -> None:
 
     with ui.column().classes("w-full max-w-3xl mx-auto p-4 gap-5"):
         with ui.card().classes(SECTION_CARD_CLASSES).props("flat"):
-            ui.label("AI 預測總表").classes("text-lg font-semibold")
+            ui.label("即將到來的預測").classes("text-lg font-semibold")
             ui.label(
-                "依裝置、溫/溼度、模型顯示最新一筆AI預測資料(依需求預測30分後的資料)，"
+                "依裝置、溫/溼度、模型顯示下一筆即將到期(約30分鐘後)的AI預測值，"
+                "目標時間尚未到達，還沒有實際量測值可比對。"
+            ).classes("text-sm text-gray-500")
+            upcoming_section()
+
+        with ui.card().classes(SECTION_CARD_CLASSES).props("flat"):
+            ui.label("AI 預測準確度").classes("text-lg font-semibold")
+            ui.label(
+                "依裝置、溫/溼度、模型顯示最新一筆已到期的AI預測資料，"
                 "並與實際量測值做比較，評估誤差及命中率。"
             ).classes("text-sm text-gray-500")
             summary_section()
