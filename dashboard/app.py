@@ -598,6 +598,11 @@ def nav_bar(current: str, on_refresh, device_id_getter=None) -> None:
                 # visual "this is the alert page" cue the generic sky
                 # highlight below doesn't carry.
                 btn.classes("bg-amber-600 text-white font-bold")
+            elif path == "/forecast":
+                # green, matching /forecast's own table headers and toggle
+                # color (bg-green / toggle-color=green) — same "this nav
+                # item's color says what page you're on" idea as amber above.
+                btn.classes("bg-green-600 text-white font-bold")
             else:
                 # Solid pill, not a pale tint: matches the reference mockup's
                 # nav highlight style.
@@ -624,10 +629,14 @@ def nav_bar(current: str, on_refresh, device_id_getter=None) -> None:
                     # Solid raised pill, not just a text-color change: plain
                     # color alone wasn't prominent enough on the small
                     # footer icons. Same color choice as the desktop
-                    # sidebar's active pill (amber for 異常警戒, sky for
-                    # everything else) for a consistent "this is current"
-                    # cue across both nav styles.
-                    pill = "bg-amber-600" if path == "/anomalies" else "bg-sky-600"
+                    # sidebar's active pill (amber for 異常警戒, green for
+                    # AI預測, sky for everything else) for a consistent
+                    # "this is current" cue across both nav styles.
+                    pill = (
+                        "bg-amber-600" if path == "/anomalies"
+                        else "bg-green-600" if path == "/forecast"
+                        else "bg-sky-600"
+                    )
                     with ui.column().classes(
                         f"items-center justify-center gap-0 py-2 px-4 -mt-3 cursor-pointer "
                         f"{pill} text-white rounded-2xl shadow-lg"
@@ -925,6 +934,20 @@ async def _gather_per_device(fn, devices: list[dict]) -> list:
     return out
 
 
+def _loading_placeholder():
+    """A small "still working" row a refreshable section shows immediately
+    on entry, before its first await — callers delete() it once real
+    content is ready to render in its place. Without this, a section's
+    title/description (created before the section itself is called) show
+    up right away but its body stays visibly blank for however long the
+    Supabase fetch takes, which reads as the page being stuck rather than
+    loading."""
+    with ui.row().classes("items-center gap-2 text-gray-400 text-sm py-2") as row:
+        ui.spinner(size="sm")
+        ui.label("資料分析預測中，請稍候...")
+    return row
+
+
 # --------------------------------------------------------------------- AI 預測
 # response_timeout well above NiceGUI's 3.0s default: this page's sections
 # each fan out a Supabase call per device (concurrent via asyncio.gather,
@@ -979,6 +1002,7 @@ async def forecast_page(device: str = "") -> None:
         # load_forecast_eval() (used by summary_section below), nothing here
         # converts it, so filtering/grouping below must compare against
         # `wanted`/METRICS directly and only map to LABEL for display.
+        loading = _loading_placeholder()
         wanted = METRIC_FILTERS[state["upcoming_metric"]]
         now = pd.Timestamp.now(tz=TZ)
 
@@ -993,6 +1017,7 @@ async def forecast_page(device: str = "") -> None:
         # and this page 500s. gather lets every device's fetch happen at
         # once, so the wait is one round trip long, not N.
         fcs = await _gather_per_device(load_forecasts, devices)
+        loading.delete()
         per_device_fc = []
         all_models: set[str] = set()
         for d, fc in zip(devices, fcs, strict=True):
@@ -1077,6 +1102,7 @@ async def forecast_page(device: str = "") -> None:
         across every device instead of one device's own detail table.
         Device-independent by design (no 裝置 selector here), mirroring
         /anomalies's fleet-wide table."""
+        loading = _loading_placeholder()
         wanted = METRIC_FILTERS[state["summary_metric"]]
         wanted_labels = [LABEL.get(k, k) for k in wanted]
 
@@ -1086,6 +1112,7 @@ async def forecast_page(device: str = "") -> None:
         # forecasts), so this loop was the likeliest one to tip a cold-cache
         # page build past NiceGUI's response_timeout.
         evs = await _gather_per_device(load_forecast_eval, devices)
+        loading.delete()
         per_device_ev = []
         all_models: set[str] = set()
         for d, ev in zip(devices, evs, strict=True):
@@ -1177,8 +1204,10 @@ async def forecast_page(device: str = "") -> None:
 
     @ui.refreshable
     async def forecast_section():
+        loading = _loading_placeholder()
         fc = await run.io_bound(load_forecasts, state["device_id"])
         if fc.empty:
+            loading.delete()
             ui.label(
                 "尚無預測。執行 analysis/baseline.py（或等排程）後會出現。"
             ).classes("text-gray-500")
@@ -1187,6 +1216,7 @@ async def forecast_page(device: str = "") -> None:
         wanted_labels = [LABEL.get(k, k) for k in wanted]
 
         ev_all = await run.io_bound(load_forecast_eval, state["device_id"])
+        loading.delete()
         if not ev_all.empty:
             ev_all = ev_all[ev_all["metric"].isin(wanted_labels)]
         if ev_all.empty:
