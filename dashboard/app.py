@@ -340,14 +340,20 @@ def load_forecasts(device_id: str) -> pd.DataFrame:
     return df
 
 
-@cached(60)
+@cached(300)
 def load_forecast_eval(device_id: str, limit: int = FORECAST_EVAL_LOOKBACK_ROWS) -> pd.DataFrame:
     """Match each already-due forecast to the actual reading nearest its
     target time (within 15 min). Returns a small table for the UI.
 
     limit defaults to ~7 days of rows: each run writes 2 models x 2 metrics
     = 4 rows every 30 min (192/day), and the dashboard's date picker needs
-    more than a single day of history to pick from."""
+    more than a single day of history to pick from.
+
+    ttl=300, not the usual @cached(30)/@cached(60): this is the slowest
+    call in the file (pages through aqua_telemetry to match forecasts),
+    and baseline.py only writes new forecasts every 30 min — a hit here
+    can be up to 5 min stale and still show data from the latest run.
+    Keep this in sync with /forecast's own auto-refresh interval below."""
     now_iso = datetime.now(timezone.utc).isoformat()
     fc = (
         sb().table("aqua_forecasts").select("*").eq("device_id", device_id)
@@ -1275,6 +1281,19 @@ async def forecast_page(device: str = "") -> None:
         summary_section.refresh()
         forecast_section.refresh()
 
+    def auto_refresh():
+        # Unlike on_refresh_click (the header button, an explicit "fetch me
+        # the latest now"), the unattended timer below must NOT clear_cache():
+        # that wipes the single module-wide _cache dict, so a /forecast tab
+        # left open was forcing every OTHER page's next visit to also pay a
+        # cold-cache fetch, on top of recomputing this page's own slowest
+        # query (load_forecast_eval's telemetry pagination) every 60s for no
+        # reason — forecasts only change every 30 min. Just re-render; each
+        # load_*()'s own @cached TTL already decides when data is stale.
+        upcoming_section.refresh()
+        summary_section.refresh()
+        forecast_section.refresh()
+
     nav_bar("/forecast", on_refresh_click, lambda: state["device_id"])
 
     with ui.column().classes("w-full max-w-3xl mx-auto p-4 gap-5"):
@@ -1304,7 +1323,10 @@ async def forecast_page(device: str = "") -> None:
             ).props("toggle-color=green")
             await forecast_section()
 
-    ui.timer(60.0, on_refresh_click)
+    # 300s, not the other pages' 60s: this page's data (forecasts/eval) only
+    # changes every 30 min, so a 60s poll bought nothing but 30x the load on
+    # the slowest query in the file — see auto_refresh's own note above.
+    ui.timer(300.0, auto_refresh)
 
 
 # ------------------------------------------------------------- 全部異常(跨裝置)
