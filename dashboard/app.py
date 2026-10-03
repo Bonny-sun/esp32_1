@@ -966,6 +966,55 @@ async def forecast_page(device: str = "") -> None:
     /anomalies), so it keeps its own device selector, mirroring /admin's."""
     ui.colors(primary="#0284c7", secondary="#0891b2", accent="#22c55e", positive="#22c55e")
 
+    # Minimal state, then nav_bar drawn right away — BEFORE the devices
+    # fetch below, unlike the rest of this page (and every other page in
+    # this file). nav_bar's device_id_getter only needs something to close
+    # over (state gets its real device_id once devices resolves further
+    # down); on_refresh_click/auto_refresh only need to exist as names,
+    # their bodies referencing the @ui.refreshable sections aren't run
+    # until a later click/timer tick, by which point those are defined.
+    # This way the header/sidebar/footer are on screen the instant the
+    # page connects, instead of waiting on a Supabase round trip first —
+    # normally a 30s-cached hit, but not worth gating the whole chrome on
+    # regardless (a cold cache, or the host waking from an idle sleep,
+    # otherwise left the page looking like the click did nothing at all).
+    state: dict = {"device_id": device}
+
+    def on_refresh_click():
+        clear_cache()
+        upcoming_section.refresh()
+        summary_section.refresh()
+        forecast_section.refresh()
+
+    def auto_refresh():
+        # Unlike on_refresh_click (the header button, an explicit "fetch me
+        # the latest now"), the unattended timer below must NOT clear_cache():
+        # that wipes the single module-wide _cache dict, so a /forecast tab
+        # left open was forcing every OTHER page's next visit to also pay a
+        # cold-cache fetch, on top of recomputing this page's own slowest
+        # query (load_forecast_eval's telemetry pagination) every 60s for no
+        # reason — forecasts only change every 30 min. Just re-render; each
+        # load_*()'s own @cached TTL already decides when data is stale.
+        upcoming_section.refresh()
+        summary_section.refresh()
+        forecast_section.refresh()
+
+    nav_bar("/forecast", on_refresh_click, lambda: state["device_id"])
+
+    # Without this, NONE of the above actually reaches the browser any
+    # sooner: NiceGUI only flushes an initial page as a partial/streaming
+    # response once the client's websocket is known to be connected, and on
+    # a plain top-level navigation (the normal case — not a client-side
+    # transition from an already-open NiceGUI tab) nothing marks it
+    # "connected" until the page function awaits this itself. Without it,
+    # the whole function — nav_bar above included — silently buffers until
+    # EVERY await below (all three sections' fetches) finishes, then ships
+    # one single complete response; moving nav_bar earlier in the function
+    # body alone doesn't change when the browser actually receives it. This
+    # is NiceGUI's own documented fix for exactly this ("Await
+    # ui.context.client.connected() before long-running setup").
+    await ui.context.client.connected()
+
     devices = await run.io_bound(load_devices)
     if not devices:
         with ui.column().classes("w-full items-center gap-3 p-16"):
@@ -974,7 +1023,7 @@ async def forecast_page(device: str = "") -> None:
         return
 
     ids = [d["device_id"] for d in devices]
-    state = {
+    state.update({
         "device_id": device if device in ids else ids[0],
         "upcoming_metric": "溫度",
         "upcoming_model": "全部",
@@ -987,7 +1036,7 @@ async def forecast_page(device: str = "") -> None:
         # undershoot fix), so 全部 by default would dump a week on screen.
         "fc_date": (datetime.now(timezone.utc) + timedelta(hours=8)).strftime("%Y-%m-%d"),
         "fc_model": "全部",
-    }
+    })
 
     @ui.refreshable
     async def upcoming_section():
@@ -1304,27 +1353,6 @@ async def forecast_page(device: str = "") -> None:
     def on_fc_metric_change(e):
         state["fc_metric"] = e.value
         forecast_section.refresh()
-
-    def on_refresh_click():
-        clear_cache()
-        upcoming_section.refresh()
-        summary_section.refresh()
-        forecast_section.refresh()
-
-    def auto_refresh():
-        # Unlike on_refresh_click (the header button, an explicit "fetch me
-        # the latest now"), the unattended timer below must NOT clear_cache():
-        # that wipes the single module-wide _cache dict, so a /forecast tab
-        # left open was forcing every OTHER page's next visit to also pay a
-        # cold-cache fetch, on top of recomputing this page's own slowest
-        # query (load_forecast_eval's telemetry pagination) every 60s for no
-        # reason — forecasts only change every 30 min. Just re-render; each
-        # load_*()'s own @cached TTL already decides when data is stale.
-        upcoming_section.refresh()
-        summary_section.refresh()
-        forecast_section.refresh()
-
-    nav_bar("/forecast", on_refresh_click, lambda: state["device_id"])
 
     with ui.column().classes("w-full max-w-3xl mx-auto p-4 gap-5"):
         with ui.card().classes(SECTION_CARD_CLASSES).props("flat"):
