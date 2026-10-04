@@ -38,6 +38,11 @@ except ImportError:
 
 TZ = "Asia/Taipei"
 METRICS = ["temperature", "humidity", "water_temp", "ph", "soil_moisture"]
+# water_temp/ph/soil_moisture have no sensor wired up on any device yet (their
+# threshold rows always render switched off) — hidden from 警戒門檻設定 below
+# rather than deleted from METRICS, since the other metric-dicts above still
+# need their labels/units/icons/colors for when hardware support lands.
+THRESHOLD_METRICS = ["temperature", "humidity"]
 LABEL = {
     "temperature": "氣溫",
     "humidity": "濕度",
@@ -1687,7 +1692,7 @@ async def admin_page(device: str = "") -> None:
         # ate an extra ~32px of padding on both sides for nothing — exactly
         # the padding this row's content needed on a 390px-wide phone screen.
         with ui.column().classes("w-full gap-0"):
-            for i, m in enumerate(METRICS):
+            for i, m in enumerate(THRESHOLD_METRICS):
                 cur = th.get(m, {})
                 enabled0 = bool(cur.get("enabled", False))
                 row_classes = "w-full items-center gap-2 py-2 flex-nowrap"
