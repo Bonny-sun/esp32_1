@@ -1360,24 +1360,16 @@ async def forecast_page(device: str = "") -> None:
         forecast_section.refresh()
 
     with ui.column().classes("w-full max-w-3xl mx-auto p-4 gap-5"):
-        with ui.card().classes(SECTION_CARD_CLASSES).props("flat"):
-            ui.label("即將到來的預測").classes("text-lg font-semibold")
-            ui.label(
-                "依裝置、溫/溼度、模型顯示下一筆即將到期(約30分鐘後)的AI預測值，"
-                "目標時間尚未到達，還沒有實際量測值可比對。"
-            ).classes("text-sm text-gray-500")
-            # Call, don't await yet: a @ui.refreshable async function's
-            # container is attached to whatever "with" block is active at
-            # call time (right here, inside this card), but the function's
-            # own body doesn't actually start running until the returned
-            # awaitable is awaited. Stashing it and awaiting all three below
-            # at once (asyncio.gather) is what lets every card's title show
-            # up immediately — previously `await upcoming_section()` here
-            # meant the NEXT card (with its own title) wasn't even created
-            # until THIS section's fetch finished, so a slow section further
-            # down blocked every later card from appearing at all, not just
-            # from showing data.
-            upcoming_coro = upcoming_section()
+        # 「即將到來的預測」card disabled for now (kept, not deleted, for an
+        # easy re-enable): with upcoming_coro unused, don't include it in
+        # the gather below either.
+        # with ui.card().classes(SECTION_CARD_CLASSES).props("flat"):
+        #     ui.label("即將到來的預測").classes("text-lg font-semibold")
+        #     ui.label(
+        #         "依裝置、溫/溼度、模型顯示下一筆即將到期(約30分鐘後)的AI預測值，"
+        #         "目標時間尚未到達，還沒有實際量測值可比對。"
+        #     ).classes("text-sm text-gray-500")
+        #     upcoming_coro = upcoming_section()
 
         with ui.card().classes(SECTION_CARD_CLASSES).props("flat"):
             ui.label("AI 預測準確度").classes("text-lg font-semibold")
@@ -1397,13 +1389,13 @@ async def forecast_page(device: str = "") -> None:
             ).props("toggle-color=green")
             forecast_coro = forecast_section()
 
-        # All three cards above are already on screen at this point (their
+        # Both cards above are already on screen at this point (their
         # titles, descriptions, and this page's own controls are plain
         # synchronous ui calls) — only the data-dependent body of each is
-        # still pending. Running the three fetches concurrently, not one
-        # card at a time, means AI 預測準確度 being slow no longer holds up
-        # 即將到來的預測 or AI預測資料查詢 from finishing first.
-        await asyncio.gather(upcoming_coro, summary_coro, forecast_coro)
+        # still pending. Running the fetches concurrently, not one card at
+        # a time, means AI 預測準確度 being slow no longer holds up
+        # AI預測資料查詢 from finishing first.
+        await asyncio.gather(summary_coro, forecast_coro)
 
     # 300s, not the other pages' 60s: this page's data (forecasts/eval) only
     # changes every 30 min, so a 60s poll bought nothing but 30x the load on
