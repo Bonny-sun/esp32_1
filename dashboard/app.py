@@ -1380,7 +1380,7 @@ async def forecast_page(device: str = "") -> None:
             summary_coro = summary_section()
 
         with ui.card().classes(SECTION_CARD_CLASSES).props("flat"):
-            ui.label("AI預測資料查詢").classes("text-lg font-semibold")
+            ui.label("AI歷史資料查詢").classes("text-lg font-semibold")
             ui.label("依裝置、日期、模型查詢AI預測資料。").classes("text-sm text-gray-500")
             ui.toggle(
                 list(METRIC_FILTERS.keys()),
@@ -1394,7 +1394,7 @@ async def forecast_page(device: str = "") -> None:
         # synchronous ui calls) — only the data-dependent body of each is
         # still pending. Running the fetches concurrently, not one card at
         # a time, means AI 預測準確度 being slow no longer holds up
-        # AI預測資料查詢 from finishing first.
+        # AI歷史資料查詢 from finishing first.
         await asyncio.gather(summary_coro, forecast_coro)
 
     # 300s, not the other pages' 60s: this page's data (forecasts/eval) only
