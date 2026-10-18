@@ -1843,6 +1843,13 @@ async def admin_page(device: str = "") -> None:
 # warms as before.
 CACHE_WARM_INTERVAL = 180
 
+# Skip warming during the small-hours window (Asia/Taipei) nobody realistically
+# visits in — a cold-cache load during these hours just costs the one visitor
+# a second or two, in exchange for cutting roughly another third off the
+# round-the-clock request volume. Kept wide (08:00–24:00 stays active) since
+# this is a public portfolio link that could get opened at any reasonable hour.
+WARM_ACTIVE_HOURS = range(8, 24)
+
 
 async def _warm_cache_once() -> None:
     devices = await run.io_bound(load_devices)
@@ -1862,7 +1869,8 @@ async def _warm_cache_once() -> None:
 async def _warm_cache_loop() -> None:
     while True:
         try:
-            await _warm_cache_once()
+            if pd.Timestamp.now(tz=TZ).hour in WARM_ACTIVE_HOURS:
+                await _warm_cache_once()
         except Exception as exc:  # never let a bad cycle kill the loop
             print(f"[cache warm] cycle failed: {exc}", flush=True)
         await asyncio.sleep(CACHE_WARM_INTERVAL)
