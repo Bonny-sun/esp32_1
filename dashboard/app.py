@@ -1826,17 +1826,21 @@ async def admin_page(device: str = "") -> None:
 
 # ---------------------------------------------------------------- 快取預熱
 # Switching pages re-runs its whole render function, which on a cold cache
-# makes a chain of blocking Supabase calls per device — worst offender is
-# load_forecast_eval(), which pages through telemetry to match it against
-# forecasts. Rather than make the user's click wait on that, a background
-# loop keeps the shared @cached() entries warm continuously (server is an
+# makes a chain of blocking Supabase calls per device. A background loop
+# keeps the shared @cached() entries warm continuously (server is an
 # always-on Render instance, not spun up per request), so a page visit
-# almost always finds the data already sitting in cache. The device only
-# publishes telemetry once a minute, so warming faster than that just
-# re-fetches the same rows (load_history(24h) per device is the expensive
-# one) around the clock with nobody looking — interval is kept above every
-# load_*'s own TTL (30s, 60s for load_forecast_eval) to cut that load, at
-# the cost of a visit being up to one warm cycle (not just one TTL) stale.
+# usually finds the data already sitting in cache.
+#
+# load_history(24h) and load_forecast_eval are deliberately NOT warmed here
+# (temporary, until Supabase usage is back under quota — see git history for
+# the pre-cutback version). Both were the two most expensive calls in the
+# file — load_history pages through up to 24h of raw telemetry per device,
+# load_forecast_eval pages through telemetry to match it against forecasts —
+# and warming them around the clock regardless of visitors is what drove the
+# project through its Supabase plan quota. Visiting 歷史趨勢 or /forecast now
+# costs a normal cold-cache wait (a second or two) instead of always being
+# pre-warmed; everything else (overview, thresholds, forecasts list) still
+# warms as before.
 CACHE_WARM_INTERVAL = 180
 
 
@@ -1845,10 +1849,8 @@ async def _warm_cache_once() -> None:
     device_ids = [d["device_id"] for d in devices]
 
     async def warm_device(did: str) -> None:
-        await run.io_bound(load_history, did, 24)
         await run.io_bound(load_thresholds, did)
         await run.io_bound(load_forecasts, did)
-        await run.io_bound(load_forecast_eval, did)
 
     await asyncio.gather(
         run.io_bound(load_all_latest),
