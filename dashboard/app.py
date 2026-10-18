@@ -1831,10 +1831,13 @@ async def admin_page(device: str = "") -> None:
 # forecasts. Rather than make the user's click wait on that, a background
 # loop keeps the shared @cached() entries warm continuously (server is an
 # always-on Render instance, not spun up per request), so a page visit
-# almost always finds the data already sitting in cache. Interval is below
-# every load_*'s own TTL (30s, 60s for load_forecast_eval) so a visit is
-# never more than one warm cycle away from fresh data.
-CACHE_WARM_INTERVAL = 25
+# almost always finds the data already sitting in cache. The device only
+# publishes telemetry once a minute, so warming faster than that just
+# re-fetches the same rows (load_history(24h) per device is the expensive
+# one) around the clock with nobody looking — interval is kept above every
+# load_*'s own TTL (30s, 60s for load_forecast_eval) to cut that load, at
+# the cost of a visit being up to one warm cycle (not just one TTL) stale.
+CACHE_WARM_INTERVAL = 180
 
 
 async def _warm_cache_once() -> None:
