@@ -1638,7 +1638,11 @@ async def ask_page() -> None:
             is_user = m["role"] == "user"
             with ui.row().classes("w-full " + ("justify-end" if is_user else "justify-start")):
                 with ui.card().classes(
-                    ("bg-sky-600 text-white" if is_user else "bg-gray-100 text-gray-800")
+                    # Quasar's own "green" utility (bg-green), not Tailwind's
+                    # bg-green-600 — matching /forecast's table headers and
+                    # toggle (headerClasses "bg-green", toggle-color=green)
+                    # exactly rather than a similar-but-different shade.
+                    ("bg-green text-white" if is_user else "bg-gray-100 text-gray-800")
                     + " max-w-[85%] p-3"
                 ).props("flat"):
                     if is_user:
@@ -1745,7 +1749,10 @@ async def ask_page() -> None:
 
                 question_input.on("keydown.enter", send)
                 with ui.row().classes("w-full justify-end"):
-                    send_button = ui.button("送出", icon="send", on_click=send).props("color=primary")
+                    # color=green: same Quasar named color as the user
+                    # bubble above and /forecast's table headers/toggle —
+                    # not the page-wide primary (sky blue).
+                    send_button = ui.button("送出", icon="send", on_click=send).props("color=green")
 
     nav_bar("/ask", lambda: chat_log.refresh(), None)
 
