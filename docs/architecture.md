@@ -1160,3 +1160,28 @@ exact version in code would have gone stale before merge.
   `dashboard/` added to conftest.py's sys.path) so `pytest -q` actually
   exercises `ask/` going forward. 80/80 tests pass (41 pre-existing + 39
   new), ruff clean.
+* **2026-11-02 (later) — fixed first live question failing:
+  `400 INVALID_ARGUMENT`, "Function call is missing a thought_signature".**
+  Found via the user's own Render logs on the very first real question
+  asked after deploying with a real `GEMINI_API_KEY` — nothing in this
+  sandbox could reproduce it (no real key, no network to the real API), so
+  this was only diagnosable from production logs. Root cause: when a
+  Gemini model with "thinking" enabled returns a function-call `Part`, that
+  `Part` also carries an opaque `thought_signature` the API requires back
+  unchanged on the next turn. `GeminiLLMClient._to_content()`'s "model"
+  branch was rebuilding that `Part` from scratch
+  (`Part.from_function_call(name=..., args=...)`) using only the plain
+  `{"name", "args"}` dict `ModelTurn`/the agent loop carry — which drops
+  `thought_signature` entirely, since it was never captured in the first
+  place. Fixed by giving `ModelTurn` an opaque `raw` field: `generate()`
+  stashes `response.candidates[0].content` (the real `Content` object,
+  signature intact) there, `answer_question()` carries it through
+  unchanged on the resulting "model" message's own `"raw"` key (the agent
+  loop never reads or interprets it — pure passthrough, keeping the
+  LLM-agnostic message-dict design for everything else), and
+  `_to_content()` resends that object byte-for-byte when present instead
+  of reconstructing one. Two new tests lock this in: one confirms `raw`
+  survives the full `answer_question()` round trip unchanged, the other
+  confirms `_to_content()` returns the original `Content` object (and its
+  `thought_signature`) rather than a rebuilt one. 83/83 tests pass, ruff
+  clean.
