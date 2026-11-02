@@ -57,9 +57,9 @@ def test_invalid_metric_rejected():
 
 @pytest.mark.parametrize(
     "hours_in, expected",
-    [(0, 1), (-5, 1), (9999, 168), (24, 24), (1, 1)],
+    [(0, 1), (-5, 1), (99999, 720), (24, 24), (1, 1)],
 )
-def test_hours_clamped_into_1_to_168(hours_in, expected):
+def test_hours_clamped_into_1_to_720(hours_in, expected):
     captured = {}
 
     def history(device_id, hours):
@@ -303,11 +303,11 @@ def test_get_anomalies_with_hours_fetches_the_wide_cap():
 
     tools = make_tools(anomalies=anomalies)
     tools.get_anomalies(hours=8, limit=5)
-    assert captured["limit"] == 500
+    assert captured["limit"] == 3000
 
 
-@pytest.mark.parametrize("hours_in, expected", [(0, 1), (-5, 1), (9999, 168), (24, 24)])
-def test_get_anomalies_hours_clamped_into_1_to_168(hours_in, expected):
+@pytest.mark.parametrize("hours_in, expected", [(0, 1), (-5, 1), (99999, 720), (24, 24)])
+def test_get_anomalies_hours_clamped_into_1_to_720(hours_in, expected):
     tools = make_tools(anomalies=lambda d, limit: pd.DataFrame())
     out = tools.get_anomalies(hours=hours_in)
     assert out["hours_used"] == expected
@@ -346,3 +346,87 @@ def test_get_forecast_keeps_only_latest_per_metric_and_model():
     assert gbm_row["range"] == [25.0, 27.0]
     ewma_row = next(r for r in out["forecasts"] if r["model"] == "ewma+drift")
     assert ewma_row["range"] == [None, None]
+
+
+# ---------------------------------------------------------------- get_daily_stats
+
+def test_get_daily_stats_unknown_device_and_bad_metric():
+    tools = make_tools()
+    assert "error" in tools.get_daily_stats("nope", "temperature", 7)
+    assert "error" in tools.get_daily_stats("esp32-aqua-01", "pressure", 7)
+
+
+def test_get_daily_stats_empty_history_reports_zero_rows():
+    tools = make_tools(history=lambda d, h: pd.DataFrame())
+    out = tools.get_daily_stats("esp32-aqua-01", "temperature", 7)
+    assert out == {"rows": 0, "device_id": "esp32-aqua-01", "metric": "temperature", "days_used": 7}
+
+
+@pytest.mark.parametrize("days_in, expected", [(0, 1), (-5, 1), (99999, 30), (10, 10), (1, 1)])
+def test_get_daily_stats_days_clamped_into_1_to_30(days_in, expected):
+    captured = {}
+
+    def history(device_id, hours):
+        captured["hours"] = hours
+        return pd.DataFrame({"temperature": [20.0]}, index=[pd.Timestamp("2026-01-01")])
+
+    tools = make_tools(history=history)
+    out = tools.get_daily_stats("esp32-aqua-01", "temperature", days_in)
+    assert out["days_used"] == expected
+    assert captured["hours"] == expected * 24
+
+
+def test_get_daily_stats_raw_window_groups_by_calendar_day():
+    # 1 day -> hours_used=24 <= 48, so the raw (per-metric-column) branch.
+    idx = pd.to_datetime(
+        [
+            "2026-06-01 08:00", "2026-06-01 14:00",  # day 1: max at 14:00
+            "2026-06-02 09:00", "2026-06-02 20:00",  # day 2: max at 20:00
+        ]
+    )
+    df = pd.DataFrame({"temperature": [20.0, 29.0, 18.0, 25.0]}, index=idx)
+    tools = make_tools(history=lambda d, h: df)
+
+    out = tools.get_daily_stats("esp32-aqua-01", "temperature", 1)
+
+    assert out["rows"] == 2
+    day1, day2 = out["daily"]
+    assert day1["date"] == "2026-06-01"
+    assert day1["max"]["value"] == 29.0
+    assert day1["max"]["time"] == "2026-06-01 14:00 (Asia/Taipei)"
+    assert day1["min"]["value"] == 20.0
+    assert day2["date"] == "2026-06-02"
+    assert day2["max"]["value"] == 25.0
+    assert day2["min"]["value"] == 18.0
+
+
+def test_get_daily_stats_hourly_window_uses_max_min_columns_not_avg():
+    # 10 days -> hours_used=240 > 48, so the hourly-rollup branch.
+    idx = pd.to_datetime(["2026-06-01 10:00", "2026-06-01 22:00", "2026-06-02 10:00"])
+    df = pd.DataFrame(
+        {
+            "temperature_avg": [20.0, 20.1, 20.2],  # flat averages
+            "temperature_max": [21.0, 31.5, 22.0],  # real spike hidden in day 1's 2nd hour
+            "temperature_min": [19.0, 19.5, 18.0],
+        },
+        index=idx,
+    )
+    tools = make_tools(history=lambda d, h: df)
+
+    out = tools.get_daily_stats("esp32-aqua-01", "temperature", 10)
+
+    assert out["rows"] == 2
+    day1 = out["daily"][0]
+    assert day1["date"] == "2026-06-01"
+    assert day1["max"]["value"] == 31.5
+    assert day1["max"]["time"] == "2026-06-01 22:00 (Asia/Taipei)"
+    assert day1["min"]["value"] == 19.0
+    assert day1["avg"] == round((20.0 + 20.1) / 2, 1)
+
+
+def test_get_daily_stats_hourly_window_missing_columns_reports_zero_rows():
+    idx = pd.to_datetime(["2026-06-01 10:00"])
+    df = pd.DataFrame({"temperature_avg": [20.0]}, index=idx)  # missing _max/_min
+    tools = make_tools(history=lambda d, h: df)
+    out = tools.get_daily_stats("esp32-aqua-01", "temperature", 10)
+    assert out["rows"] == 0

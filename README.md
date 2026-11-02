@@ -103,25 +103,31 @@ real data instead of a canned response.
 ### How it works — Tool Calling, not text-to-SQL
 
 The LLM (Google Gemini, `google-genai` SDK) never sees the database and never
-writes SQL. It can only call five fixed, read-only Python functions declared
-up front, each with a strict parameter schema:
+writes SQL. It can only call a fixed set of read-only Python functions
+declared up front, each with a strict parameter schema:
 
 ```
 list_devices()                                      — every registered device
 get_latest(device_id=None)                          — most recent reading(s)
-get_stats(device_id, metric, hours)                 — avg/max/min + when, over N hours
+get_stats(device_id, metric, hours)                 — ONE avg/max/min summary + when,
+                                                        over the whole N-hour window
+get_daily_stats(device_id, metric, days)            — avg/max/min + when, ONE entry
+                                                        per calendar day, over N days
 get_anomalies(device_id=None, hours=None, limit)    — flagged anomalies, optionally
                                                         within the last N hours
 get_forecast(device_id)                             — latest forecast per (metric, model)
 ```
 
+(`hours` up to 720 / `days` up to 30 — a month — matching the dashboard's own
+longest history view.)
+
 Text-to-SQL (letting the model write its own queries) is more flexible, but
 for a small, fixed data model the flexibility buys little while adding real
 risk: a malformed or slow query, or — worse — a write the model wasn't
 supposed to make. Tool Calling trades that flexibility for a hard guarantee:
-whatever the model asks for, only these five read-only functions can run,
-each with its own input validation (unknown device → explicit error, not a
-query against a nonexistent id; `hours`/`limit` clamped into a safe range;
+whatever the model asks for, only these read-only functions can run, each
+with its own input validation (unknown device → explicit error, not a query
+against a nonexistent id; `hours`/`days`/`limit` clamped into a safe range;
 `metric` restricted to an allow-list) and output shape (numbers, timestamps,
 device names — never a raw DB row or an unbounded block of text). The flow:
 

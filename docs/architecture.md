@@ -210,13 +210,13 @@ appended back into messages as a {"role":"tool", ...} entry, loop
 repeats (max 4 rounds) until Gemini returns final text
 ```
 
-**Why Tool Calling, not text-to-SQL.** The data model is small and fixed
-(five read-only query shapes cover every question worth asking), so letting
-the model write its own SQL buys little flexibility in exchange for a real
-risk surface — a malformed query, an expensive full-table scan, or a write
-the model was never supposed to attempt. Tool Calling makes "the model can
-only do these five things" a structural guarantee, not a prompt-level
-request the model could ignore.
+**Why Tool Calling, not text-to-SQL.** The data model is small and fixed (a
+handful of read-only query shapes cover every question worth asking), so
+letting the model write its own SQL buys little flexibility in exchange for
+a real risk surface — a malformed query, an expensive full-table scan, or a
+write the model was never supposed to attempt. Tool Calling makes "the model
+can only do these specific things" a structural guarantee, not a
+prompt-level request the model could ignore.
 
 **`dashboard/ask/tools.py` — `AskTools`.** Takes `load_devices`/
 `load_history`/`load_anomalies`/`load_forecasts`/`load_all_latest` as
@@ -1217,3 +1217,35 @@ exact version in code would have gone stale before merge.
   network round trip to Supabase. 8 new tests (window filtering, the
   rows-vs-limit distinction, the fetch-size difference with/without
   `hours`, clamping) — 91/91 total, ruff clean.
+* **2026-11-02 (later still) — `HOURS_MAX` 168h → 720h (30 days), new
+  `get_daily_stats` tool.** User asked "告訴我最近一周每日的最高最低溫"
+  (each day's high/low this week) — `get_stats` structurally can't answer
+  that (it only ever returns one aggregate for its whole `hours` window);
+  the model correctly said so rather than guessing, but that's still a
+  real gap. Two independent asks, both done together: (1) raised the
+  shared `HOURS_MIN`/`HOURS_MAX` clamp (used by both `get_stats` and
+  `get_anomalies`) from 168h to 720h, matching the dashboard's own longest
+  history view (`RANGE_HOURS`'s "30 天" option in app.py) instead of an
+  arbitrary shorter cap; (2) new `get_daily_stats(device_id, metric,
+  days)` tool — same avg/max/min-with-when shape as `get_stats`, but one
+  entry per calendar day via `.groupby(index.date)` instead of one
+  aggregate. Reuses `get_stats`'s exact raw-vs-hourly-rollup branching
+  (same `hours<=48` boundary, same "`_max`/`_min` columns' own extremes,
+  never the `_avg` column's max/min" rule — see that tool's own entry
+  above), just grouped by day afterwards; the index is already Asia/Taipei
+  wall-clock in both branches (this module's docstring), so grouping by
+  `.date` needs no further tz handling. For the hourly-rollup branch,
+  `dropna()` runs on all three `_avg`/`_max`/`_min` columns together before
+  grouping (not per-column) to keep each day's rows aligned — the hourly
+  rollup writes all three from one pass per bucket, so in practice they're
+  never null independently, and grouping one pre-aligned frame is simpler
+  than reconciling three separately-grouped Series either way. Both tools'
+  schema descriptions now cross-reference each other (`get_stats`: "for
+  each day separately, use get_daily_stats instead") so the model picks
+  the right one proactively instead of calling `get_stats` and then
+  apologizing for a limitation it could have avoided. `ANOMALY_FETCH_CAP`
+  also raised 500 → 3000: a live demo had already shown ~2 anomalies/hour
+  across 2 devices while a threshold was actively tripped, and the old cap
+  was sized to "comfortably cover 168h" — with `hours` now reaching 720h,
+  the theoretical worst case (every device/metric/hour triggering) could
+  exceed it. 10 new tests, 101/101 total, ruff clean.
