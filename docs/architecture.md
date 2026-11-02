@@ -1185,3 +1185,18 @@ exact version in code would have gone stale before merge.
   confirms `_to_content()` returns the original `Content` object (and its
   `thought_signature`) rather than a rebuilt one. 83/83 tests pass, ruff
   clean.
+* **2026-11-02 (later still) — raised `DEFAULT_TIMEOUT_MS` 20s → 60s.**
+  Second live failure, different question: "最近8小時有幾筆異常，請依裝置及
+  項目統計數量給我" (group/count anomalies by device+metric — real
+  reasoning over the tool's result, not a single-value lookup like the
+  first successful question). Render log: `ask page: generate failed: The
+  read operation timed out`. The thinking-enabled model (same one
+  `thought_signature` above is about) legitimately needs more than 20s for
+  a question requiring actual reasoning, not just a slow network — 20s was
+  a guess made without live data to calibrate against; 60s is still a
+  per-round budget (one `generate_content` HTTP call), not a total for the
+  whole up-to-4-round loop, so a worst-case question can still take a few
+  minutes server-side. No test added — this is a plain constant with no
+  behavior to assert beyond "the value changed"; verifying it actually
+  fixes the timeout needs another live re-test, same as both /ask fixes
+  above.
