@@ -629,10 +629,13 @@ def nav_bar(current: str, on_refresh, device_id_getter=None) -> None:
                 # visual "this is the alert page" cue the generic sky
                 # highlight below doesn't carry.
                 btn.classes("bg-amber-600 text-white font-bold")
-            elif path == "/forecast":
+            elif path in ("/forecast", "/ask"):
                 # green, matching /forecast's own table headers and toggle
                 # color (bg-green / toggle-color=green) — same "this nav
                 # item's color says what page you're on" idea as amber above.
+                # /ask shares it with /forecast rather than getting its own
+                # third color: both are "AI-powered" pages, so one color
+                # family for "AI" reads more consistently than a fourth hue.
                 btn.classes("bg-green-600 text-white font-bold")
             else:
                 # Solid pill, not a pale tint: matches the reference mockup's
@@ -661,11 +664,11 @@ def nav_bar(current: str, on_refresh, device_id_getter=None) -> None:
                     # color alone wasn't prominent enough on the small
                     # footer icons. Same color choice as the desktop
                     # sidebar's active pill (amber for 異常警戒, green for
-                    # AI預測, sky for everything else) for a consistent
-                    # "this is current" cue across both nav styles.
+                    # the AI pages, sky for everything else) for a
+                    # consistent "this is current" cue across both nav styles.
                     pill = (
                         "bg-amber-600" if path == "/anomalies"
-                        else "bg-green-600" if path == "/forecast"
+                        else "bg-green-600" if path in ("/forecast", "/ask")
                         else "bg-sky-600"
                     )
                     with ui.column().classes(
