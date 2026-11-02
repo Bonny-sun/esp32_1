@@ -168,6 +168,17 @@ body.theme-tech .q-menu { color: #1e293b !important; }
 .ask-markdown p:last-child { margin-bottom: 0; }
 .ask-markdown ul, .ask-markdown ol { margin: 0.2em 0; padding-left: 1.3em; }
 .ask-markdown li { margin: 0.1em 0; }
+/* The model sometimes heads a section with "# 裝置名稱" rather than just
+   **bold** — markdown2 renders that as a real <h1>-<h4>, whose browser
+   default sizes (up to ~2em) made the text jump abruptly larger mid-reply
+   (user-reported live screenshot). Normalized to the surrounding text's
+   own size, bold only — "頂多用粗體就好" as asked — so nothing in a reply
+   changes size, only weight. */
+.ask-markdown h1, .ask-markdown h2, .ask-markdown h3, .ask-markdown h4 {
+    font-size: inherit;
+    font-weight: 700;
+    margin: 0.3em 0;
+}
 """
 
 
@@ -1678,23 +1689,17 @@ async def ask_page() -> None:
         with ui.card().classes(SECTION_CARD_CLASSES + " gap-3 p-4").props("flat"):
             with ui.column().classes("w-full gap-2 max-h-[55vh] min-h-[200px] overflow-y-auto"):
                 chat_log()
-            # flex-nowrap: Quasar's .row utility defaults to flex-wrap, so
-            # once the input (with its outlined box) plus the button's
-            # combined natural width exceeded the card on a narrower real
-            # phone than this was first checked on, the button dropped to
-            # its own line below instead of staying beside the input
-            # (live screenshot) — same fix already used elsewhere in this
-            # file (nav_bar's footer row) for the identical Quasar behavior.
-            with ui.row().classes("w-full items-center gap-2 flex-nowrap"):
+            # Input and button stacked on their own rows (input full-width,
+            # button right-aligned below it) rather than side by side —
+            # requested after the side-by-side layout (with flex-nowrap)
+            # still read as cramped on a real phone. Sidesteps that whole
+            # class of "does it fit on one line at this width" problem:
+            # each row always has its own full width to work with.
+            with ui.column().classes("w-full gap-2"):
                 # outlined: the default Quasar "standard" input is just a
                 # bottom border, easy to miss as a tappable field on mobile
-                # next to a solid button (user feedback from a live
-                # screenshot). min-w-0 overrides flex's own default
-                # min-width:auto, which otherwise refuses to let this input
-                # shrink below its placeholder's natural width, pushing/
-                # clipping the 送出 button on a narrow phone screen — a
-                # short placeholder isn't enough by itself to fix that.
-                question_input = ui.input(placeholder="輸入問題…").classes("flex-grow min-w-0")
+                # (user feedback from a live screenshot).
+                question_input = ui.input(placeholder="輸入問題…").classes("w-full")
                 question_input.props(f"outlined dense maxlength={MAX_QUESTION_CHARS}")
 
                 # Nested here (not a sibling of gate_or_content) so it closes
@@ -1736,7 +1741,8 @@ async def ask_page() -> None:
                     chat_log.refresh()
 
                 question_input.on("keydown.enter", send)
-                send_button = ui.button("送出", icon="send", on_click=send).props("color=primary")
+                with ui.row().classes("w-full justify-end"):
+                    send_button = ui.button("送出", icon="send", on_click=send).props("color=primary")
 
     nav_bar("/ask", lambda: chat_log.refresh(), None)
 
