@@ -13,7 +13,10 @@ from types import SimpleNamespace
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path[:0] = [str(ROOT / "worker"), str(ROOT / "analysis")]
+# "dashboard" here is for `ask/` (tools.py, agent.py) only — tests import it
+# directly as `ask.tools`/`ask.agent`, never `dashboard.app`, so nothing here
+# triggers app.py's ~900 lines of NiceGUI @ui.page registration side effects.
+sys.path[:0] = [str(ROOT / "worker"), str(ROOT / "analysis"), str(ROOT / "dashboard")]
 
 for key, val in {
     "MQTT_HOST": "localhost",

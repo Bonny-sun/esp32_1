@@ -94,12 +94,71 @@ MQTT topic contract (`aquaponics/<site>/<device>/…`):
 - **Remote control** — pet skin and the pet's hot/cold expression thresholds
   are set from the dashboard via retained MQTT `cmd`.
 
+## AI 問答（Tool Calling）
+
+`/ask` lets a visitor type a question in natural Chinese — "最新溫度是多少?",
+"昨天最高溫幾度?", "過去24小時有沒有異常?" — and get an answer sourced from
+real data instead of a canned response.
+
+### How it works — Tool Calling, not text-to-SQL
+
+The LLM (Google Gemini, `google-genai` SDK) never sees the database and never
+writes SQL. It can only call five fixed, read-only Python functions declared
+up front, each with a strict parameter schema:
+
+```
+list_devices()                               — every registered device
+get_latest(device_id=None)                   — most recent reading(s)
+get_stats(device_id, metric, hours)           — avg/max/min + when, over N hours
+get_anomalies(device_id=None, limit)          — recent flagged anomalies
+get_forecast(device_id)                       — latest forecast per (metric, model)
+```
+
+Text-to-SQL (letting the model write its own queries) is more flexible, but
+for a small, fixed data model the flexibility buys little while adding real
+risk: a malformed or slow query, or — worse — a write the model wasn't
+supposed to make. Tool Calling trades that flexibility for a hard guarantee:
+whatever the model asks for, only these five read-only functions can run,
+each with its own input validation (unknown device → explicit error, not a
+query against a nonexistent id; `hours`/`limit` clamped into a safe range;
+`metric` restricted to an allow-list) and output shape (numbers, timestamps,
+device names — never a raw DB row or an unbounded block of text). The flow:
+
+```
+使用者提問 → Gemini 決定要呼叫哪個/哪些工具 → dashboard 執行工具,查 Supabase
+  → 工具結果（純數字/時間，不含任意文字）送回給 Gemini → Gemini 組織成繁體中文回答
+  （最多重複 4 輪工具呼叫；超過就回覆「無法完成」，不會無限迴圈）
+```
+
+Every answer ends with a one-line "資料來源" note (which tool, which device,
+which time range) so it can be checked against the dashboard's own pages.
+
+### Environment variables
+
+| Variable | Required | Notes |
+|---|---|---|
+| `GEMINI_API_KEY` | to enable the feature | from [Google AI Studio](https://aistudio.google.com/apikey). Unset → `/ask` shows "功能未啟用"; every other page is unaffected. |
+| `GEMINI_MODEL` | no | model id, or a Google-maintained alias like `gemini-flash-latest`. The Gemini model lineup changes often — check [the model list](https://ai.google.dev/gemini-api/docs/models) rather than assuming a name is still current. Falls back to a code-level default alias if unset. |
+| `ASK_RATE_PER_MINUTE` / `ASK_RATE_PER_DAY` / `ASK_RATE_SITE_PER_DAY` | no | abuse/cost guard: per-visitor and site-wide question caps (sane built-in defaults). In-memory counters — **reset on every restart/redeploy**, which is an accepted tradeoff for a single-instance demo site, not a design for a real multi-tenant product. |
+| `ASK_REQUIRE_AUTH` | no | `true` makes `/ask` require the same `DASH_USERNAME`/`DASH_PASSWORD` login as `/admin`. Defaults to `false` (open), matching this being a public portfolio demo. |
+
+### Local run
+
+```bash
+cd dashboard
+cp .env.example .env   # fill in SUPABASE_URL/KEY + GEMINI_API_KEY
+pip install -r requirements.txt
+python app.py
+```
+
+Open `http://localhost:8080/ask`.
+
 ## Status — live (updated 2026-09-30)
 
 Full pipeline deployed and running 24/7 across two boards.
 
 - **Dashboard pages**, all sharing one top nav bar (首頁/異常警戒/AI預測/
-  後台設定): `/` — 即時資料總表 (multi-board summary table), live values
+  AI問答/後台設定): `/` — 即時資料總表 (multi-board summary table), live values
   (red when out of band), history charts (10-min bins, dashed 上限/下限
   lines);
   `/forecast` — AI 預測總表 (fleet-wide, latest forecast + aggregate
@@ -109,8 +168,10 @@ Full pipeline deployed and running 24/7 across two boards.
   `/anomalies` — 異常警戒, a fleet-wide alarm
   list across every device (device + date + metric filters, defaults to
   today), its own page rather than a section so it reads as a
-  first-class destination, not something scrolled past; `/admin` —
-  editable alert thresholds and other settings.
+  first-class destination, not something scrolled past;
+  `/ask` — AI 問答, a chat page answering natural-language questions about
+  the sensor data via LLM Tool Calling (see "AI 問答" section below);
+  `/admin` — editable alert thresholds and other settings.
 - **Supabase `pg_cron`:** hourly rollup, 30-day raw retention, per-minute
   threshold alerting.
 - **AI:** `.github/workflows/forecast.yml` runs `analysis/baseline.py` every
@@ -126,6 +187,7 @@ Full pipeline deployed and running 24/7 across two boards.
 | Storage | Supabase (PostgreSQL) — wide table + `extra jsonb`, `pg_cron` |
 | AI | pandas + scikit-learn: EWMA+drift & GBM forecast (champion-challenger), rolling z-score → IsolationForest |
 | Dashboard | NiceGUI + ECharts on Render |
+| AI 問答 | Google Gemini (`google-genai`), manual Tool Calling against read-only query functions |
 | Alerts | LINE Messaging API |
 | Scheduling | GitHub Actions (forecast job) |
 
@@ -150,10 +212,11 @@ src/main.cpp               firmware: sensor + pet animation + Wi-Fi/MQTT FSM
 sql/                       Supabase DDL + migrations (run in order in the SQL editor)
 worker/ingest.py           Render background worker: MQTT -> Supabase + LINE push
 dashboard/app.py           NiceGUI dashboard (Render web service)
+dashboard/ask/             AI 問答: LLM Tool Calling agent + read-only query tools
 analysis/baseline.py       pull history -> forecast + anomalies -> write back
 render.yaml                Render Blueprint (worker + dashboard)
 .github/workflows/         scheduled forecast job
-tests/                     pytest suite (worker + analysis, Supabase faked)
+tests/                     pytest suite (worker, analysis, ask; Supabase/LLM faked)
 requirements-dev.txt       deps for lint + tests
 tools/png_to_xbm.py        convert a 48x48 1-bit PNG to a C XBM array (optional)
 docs/architecture.md       design doc + decisions log

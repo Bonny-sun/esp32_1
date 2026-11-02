@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import secrets
 import ssl
@@ -26,6 +27,8 @@ from urllib.parse import quote
 import httpx
 import paho.mqtt.client as mqtt
 import pandas as pd
+from ask.agent import DEFAULT_MODEL, MAX_QUESTION_CHARS, GeminiLLMClient, RateLimiter, answer_question
+from ask.tools import AskTools
 from nicegui import app, run, ui
 from supabase import create_client
 
@@ -85,6 +88,7 @@ NAV_LINKS = [
     ("首頁", "/", "home"),
     ("異常警戒", "/anomalies", "warning"),
     ("AI預測", "/forecast", "insights"),
+    ("AI問答", "/ask", "chat"),
     ("後台設定", "/admin", "settings"),
 ]
 
@@ -1543,6 +1547,164 @@ async def anomalies_page() -> None:
             table_section()
 
     ui.timer(60.0, on_refresh_click)
+
+
+# ---------------------------------------------------------------- AI 問答
+# Bound once at import time (not per-page-visit) — AskTools is just a thin
+# wrapper over the same load_*() functions every other page already calls,
+# cheap to construct and fine to share across every connection. GEMINI_API_KEY
+# missing is the normal "not configured yet" state (mirrors worker/ingest.py's
+# LINE_CHANNEL_TOKEN pattern): the page renders a "功能未啟用" card instead of
+# failing dashboard startup, so a demo deploy with no key still serves every
+# other page normally.
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL") or DEFAULT_MODEL
+ASK_REQUIRE_AUTH = os.environ.get("ASK_REQUIRE_AUTH", "false").strip().lower() == "true"
+ASK_ENABLED = bool(GEMINI_API_KEY)
+
+_ask_tools = AskTools(
+    load_devices=load_devices,
+    load_history=load_history,
+    load_anomalies=load_anomalies,
+    load_forecasts=load_forecasts,
+    load_all_latest=load_all_latest,
+)
+_ask_rate_limiter = RateLimiter()
+_ask_llm: GeminiLLMClient | None = None  # lazy: only built on the first real
+# question, not at import time, so a misconfigured/invalid key surfaces as a
+# normal in-chat error on first use rather than crashing the whole process
+# before any page can render.
+
+
+def _get_ask_llm() -> GeminiLLMClient:
+    global _ask_llm
+    if _ask_llm is None:
+        _ask_llm = GeminiLLMClient(api_key=GEMINI_API_KEY, model=GEMINI_MODEL)
+    return _ask_llm
+
+
+def _ask_identity() -> str:
+    """Stable per-browser id for rate limiting — same app.storage.user
+    (signed cookie, see STORAGE_SECRET) mechanism get_theme()/set_theme()
+    already use, not the NiceGUI connection id, so refreshing the page
+    doesn't quietly reset a visitor's quota."""
+    try:
+        store = app.storage.user
+        if "ask_id" not in store:
+            store["ask_id"] = secrets.token_hex(8)
+        return store["ask_id"]
+    except Exception:
+        return "unknown"
+
+
+@ui.page("/ask", title="🤖 AIoT智慧物聯系統 · AI 問答")
+async def ask_page() -> None:
+    ui.colors(primary="#0284c7", secondary="#0891b2", accent="#22c55e", positive="#22c55e")
+
+    state = {"unlocked": not (ASK_REQUIRE_AUTH and ADMIN_AUTH_REQUIRED), "messages": [], "busy": False}
+
+    @ui.refreshable
+    def chat_log() -> None:
+        if not state["messages"]:
+            ui.label(
+                "試試問：「最新溫度是多少？」「昨天最高溫幾度？」「過去24小時有沒有異常？」「接下來的預測？」"
+            ).classes("text-sm text-gray-400 italic")
+        for m in state["messages"]:
+            is_user = m["role"] == "user"
+            with ui.row().classes("w-full " + ("justify-end" if is_user else "justify-start")):
+                with ui.card().classes(
+                    ("bg-sky-600 text-white" if is_user else "bg-gray-100 text-gray-800")
+                    + " max-w-[85%] p-3"
+                ).props("flat"):
+                    ui.label(m["text"]).classes("whitespace-pre-wrap text-sm")
+
+    @ui.refreshable
+    async def gate_or_content() -> None:
+        if not ASK_ENABLED:
+            with ui.card().classes(SECTION_CARD_CLASSES + " items-center gap-2 p-10").props("flat"):
+                ui.icon("smart_toy", size="xl").classes("text-gray-400")
+                ui.label("功能未啟用").classes("text-lg text-gray-500")
+                ui.label("尚未設定 GEMINI_API_KEY。").classes("text-xs text-gray-400")
+            return
+
+        if ASK_REQUIRE_AUTH and ADMIN_AUTH_REQUIRED and not state["unlocked"]:
+            with ui.card().classes("w-full max-w-sm mx-auto mt-10 items-center gap-3 p-6"):
+                ui.icon("lock", size="xl").classes("text-gray-400")
+                ui.label("AI 問答登入").classes("text-lg font-semibold")
+                user = ui.input("帳號").classes("w-full")
+                pw = ui.input("密碼", password=True).classes("w-full")
+
+                def try_unlock(user=user, pw=pw):
+                    ok = secrets.compare_digest(user.value, DASH_USERNAME) and secrets.compare_digest(
+                        pw.value, DASH_PASSWORD
+                    )
+                    if ok:
+                        state["unlocked"] = True
+                        gate_or_content.refresh()
+                    else:
+                        ui.notify("帳號或密碼錯誤", type="negative")
+
+                pw.on("keydown.enter", try_unlock)
+                ui.button("登入", on_click=try_unlock).classes("w-full").props("color=primary")
+            return
+
+        with ui.card().classes(SECTION_CARD_CLASSES + " gap-3 p-4").props("flat"):
+            with ui.column().classes("w-full gap-2 max-h-[55vh] min-h-[200px] overflow-y-auto"):
+                chat_log()
+            with ui.row().classes("w-full items-end gap-2"):
+                question_input = ui.input(placeholder="輸入問題，例如：最新溫度是多少？").classes("flex-grow")
+                question_input.props(f"maxlength={MAX_QUESTION_CHARS}")
+
+                # Nested here (not a sibling of gate_or_content) so it closes
+                # over question_input/send_button directly — those are local
+                # to this refreshable's own call, recreated fresh on every
+                # gate_or_content.refresh(), so a function defined outside it
+                # could only ever see a stale or undefined reference.
+                async def send(_=None) -> None:
+                    if state["busy"]:
+                        return
+                    question = question_input.value.strip()
+                    if not question:
+                        return
+                    if len(question) > MAX_QUESTION_CHARS:
+                        ui.notify(f"問題請在 {MAX_QUESTION_CHARS} 字以內。", type="warning")
+                        return
+                    reason = _ask_rate_limiter.check(_ask_identity())
+                    if reason:
+                        ui.notify(reason, type="warning")
+                        return
+
+                    question_input.value = ""
+                    state["busy"] = True
+                    send_button.props("loading")
+                    state["messages"].append({"role": "user", "text": question})
+                    state["messages"].append({"role": "assistant", "text": "思考中…"})
+                    chat_log.refresh()
+                    try:
+                        _ask_rate_limiter.record(_ask_identity())
+                        answer = await run.io_bound(
+                            answer_question, question, llm=_get_ask_llm(), tools=_ask_tools
+                        )
+                    except Exception as exc:
+                        logging.getLogger(__name__).warning("ask page: generate failed: %s", exc)
+                        answer = "發生錯誤，請稍後再試。"
+                    state["messages"][-1] = {"role": "assistant", "text": answer}
+                    state["busy"] = False
+                    send_button.props(remove="loading")
+                    chat_log.refresh()
+
+                question_input.on("keydown.enter", send)
+                send_button = ui.button("送出", icon="send", on_click=send).props("color=primary")
+
+    nav_bar("/ask", lambda: chat_log.refresh(), None)
+
+    with ui.column().classes("w-full max-w-3xl mx-auto p-4 gap-3"):
+        ui.label("AI 問答").classes("text-lg font-semibold")
+        ui.label(
+            "用中文詢問感測資料，AI 會呼叫系統內建的唯讀查詢工具取得真實數值再回答，"
+            "並在回答最後附上資料來源，方便驗證。"
+        ).classes("text-xs text-gray-400")
+        await gate_or_content()
 
 
 # ---------------------------------------------------------------- 管理後台

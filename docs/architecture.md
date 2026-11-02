@@ -184,7 +184,101 @@ code, and delivery lags the actual breach by at most ~1 min. Rolling
 z-score anomalies (`method='rolling_zscore'`) do **not** push — those are
 informational, not real threshold breaches.
 
-## 8. Decisions log
+## 8. AI 問答 (Tool Calling)
+
+```
+使用者 (/ask 頁面)
+   │ 中文問題
+   ▼
+dashboard/ask/agent.py  answer_question()
+   │ messages=[{"role":"user","text":...}]
+   ▼
+GeminiLLMClient.generate()  ──► Gemini API (manual function calling,
+   │                               automatic_function_calling.disable=True)
+   │ ModelTurn(tool_calls=[...]) or ModelTurn(text=...)
+   ▼
+dashboard/ask/tools.py  AskTools.<tool>(**args)
+   │ (device_id validated against load_devices(), metric/hours/limit
+   │  validated+clamped — never raises, returns {"error": ...} instead)
+   ▼
+app.py's existing load_devices/load_history/load_anomalies/
+load_forecasts/load_all_latest()  ──► Supabase (same @cached() path
+                                        every other page already uses)
+   │ small JSON dict: numbers, Asia/Taipei timestamps, device names
+   ▼
+appended back into messages as a {"role":"tool", ...} entry, loop
+repeats (max 4 rounds) until Gemini returns final text
+```
+
+**Why Tool Calling, not text-to-SQL.** The data model is small and fixed
+(five read-only query shapes cover every question worth asking), so letting
+the model write its own SQL buys little flexibility in exchange for a real
+risk surface — a malformed query, an expensive full-table scan, or a write
+the model was never supposed to attempt. Tool Calling makes "the model can
+only do these five things" a structural guarantee, not a prompt-level
+request the model could ignore.
+
+**`dashboard/ask/tools.py` — `AskTools`.** Takes `load_devices`/
+`load_history`/`load_anomalies`/`load_forecasts`/`load_all_latest` as
+constructor-injected callables (the exact functions already defined in
+app.py) rather than talking to Supabase itself — keeps the module importable
+and unit-testable with fake loaders, with zero dependency on NiceGUI or
+`google-genai`. Every method returns a plain dict and never raises for a bad
+argument: unknown `device_id` → `{"error": ...}`; `metric` restricted to
+`temperature`/`humidity` (the only two with wired sensors — see §2); `hours`
+clamped to 1-168, `limit` to 1-50; empty data → `{"rows": 0, ...}` rather
+than the model inventing a number. One pitfall this had to get right:
+`load_history(device_id, hours)` returns two different column shapes
+depending on the window (§ load_history in app.py — raw `temperature`/
+`humidity` columns for `hours<=48`, `{metric}_avg`/`_min`/`_max` from the
+hourly rollup table above that), so `get_stats`'s max/min for a >48h window
+must read the `_max`/`_min` columns' own extremes, not the max/min of the
+`_avg` column (which would answer "highest hourly average", silently
+hiding a real spike that happened within an otherwise-average hour). Every
+timestamp in a tool's output is formatted as explicit Asia/Taipei wall-clock
+— three different raw shapes flow in (load_history's tz-naive-but-already-
++8h index, load_anomalies/load_forecasts's tz-aware TZ-converted
+Timestamps, load_all_latest's raw un-converted UTC string) and a single
+`_fmt_taipei()` helper normalizes all three so the model (and the user
+reading its citation) never has to reason about which one it got.
+
+**`dashboard/ask/agent.py` — the loop.** `LLMClient` is a one-method
+Protocol (`generate(messages) -> ModelTurn`) so the loop itself
+(`answer_question()`) is Gemini-agnostic and unit-testable with a scripted
+fake — no SDK, no network, no API key needed to test round-counting, tool
+dispatch, or error handling. `messages` is a plain list of dicts (not
+`google.genai.types.Content`/`Part`), translated to/from the real SDK's
+types only inside `GeminiLLMClient`. Manual (not automatic) function
+calling was chosen specifically so the loop enforces its own hard cap —
+`MAX_TOOL_ROUNDS = 4` — independent of the SDK's own automatic-calling loop
+(which defaults to up to 10 remote calls and isn't driven by this file's own
+give-up message). A tool that raises is caught and reported back to the
+model as `{"error": str(exc)}` rather than crashing the request — the model
+can say "無法查詢該資料" instead of the page 500ing.
+
+**Abuse/cost guard — `RateLimiter`.** Per-visitor (keyed by a random id
+stored in `app.storage.user`, the same signed-cookie mechanism the theme
+picker already uses) per-minute and per-day caps, plus a site-wide daily
+cap, all with environment-variable-overridable defaults
+(`ASK_RATE_PER_MINUTE`/`ASK_RATE_PER_DAY`/`ASK_RATE_SITE_PER_DAY`). Plain
+in-process lists of timestamps, not a DB table — this only needs to survive
+one Render instance's uptime, and avoids spending a Supabase round trip on
+every keystroke's worth of protection. Resets to zero on every
+restart/redeploy; accepted as a single-instance-demo-site tradeoff, not
+something a real multi-tenant product would ship.
+
+**Feature flag.** `GEMINI_API_KEY` unset → `/ask` renders a "功能未啟用" card
+instead of calling Gemini — same "missing secret = feature off, not a
+crash" pattern `LINE_CHANNEL_TOKEN` already uses on the worker (§7). The
+`GeminiLLMClient` itself is constructed lazily (only on the first real
+question, not at process startup), so a misconfigured/invalid key surfaces
+as an in-chat error on first use rather than failing the whole dashboard's
+startup. `GEMINI_MODEL` defaults to a Google-maintained alias
+(`gemini-flash-latest`) rather than a dated model name — the Gemini model
+lineup was found to move fast enough during implementation that pinning an
+exact version in code would have gone stale before merge.
+
+## 9. Decisions log
 
 * **2026-09-03** — Board confirmed ESP32-WROOM-32 (not WROVER) → RGB stays on
   GPIO16/17/18. Power jumper → 3.3V.
@@ -1048,3 +1142,21 @@ informational, not real threshold breaches.
     confirm by observation after deploy, same as the #126 mock gap
     above — any future bug that is consistent per-device/per-thread but
     invisible locally should be suspected of the same root cause.
+* **2026-11-02 — AI 問答 (`/ask`), LLM Tool Calling.** New
+  `dashboard/ask/` package (`tools.py`, `agent.py`) + `/ask` page; full
+  design writeup in §8. Chose manual (not the SDK's automatic) Gemini
+  function calling specifically so the agent loop can enforce its own
+  4-round cap and give-up message. Caught during its own test-writing: the
+  first draft of `get_stats`'s `hours>48` branch was unreachable dead code
+  — an early `metric not in df.columns` guard checked for the raw column
+  name (`temperature`) even on the hourly-rollup path, where only the
+  suffixed `temperature_avg`/`_max`/`_min` columns exist, so every >48h
+  query silently fell through to `{"rows": 0}`. A test built from the real
+  hourly-rollup column shape (not just the raw-window shape) caught it
+  before merge. `requirements-dev.txt` previously only pulled in
+  `worker`+`analysis` requirements — `dashboard/requirements.txt` was never
+  installed in CI and `tests/` had zero dashboard coverage; both fixed
+  alongside this (dashboard/requirements.txt now in requirements-dev.txt,
+  `dashboard/` added to conftest.py's sys.path) so `pytest -q` actually
+  exercises `ask/` going forward. 80/80 tests pass (41 pre-existing + 39
+  new), ruff clean.
