@@ -69,3 +69,10 @@ services:
         sync: false
       - key: MQTT_PASS
         sync: false
+      # /ask (AI 問答). Leave GEMINI_API_KEY unset in the Render dashboard to
+      # keep the feature disabled — every code path treats a missing key as
+      # "feature off", same pattern as LINE_CHANNEL_TOKEN on the worker.
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        sync: false
