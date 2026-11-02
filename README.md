@@ -107,11 +107,12 @@ writes SQL. It can only call five fixed, read-only Python functions declared
 up front, each with a strict parameter schema:
 
 ```
-list_devices()                               — every registered device
-get_latest(device_id=None)                   — most recent reading(s)
-get_stats(device_id, metric, hours)           — avg/max/min + when, over N hours
-get_anomalies(device_id=None, limit)          — recent flagged anomalies
-get_forecast(device_id)                       — latest forecast per (metric, model)
+list_devices()                                      — every registered device
+get_latest(device_id=None)                          — most recent reading(s)
+get_stats(device_id, metric, hours)                 — avg/max/min + when, over N hours
+get_anomalies(device_id=None, hours=None, limit)    — flagged anomalies, optionally
+                                                        within the last N hours
+get_forecast(device_id)                             — latest forecast per (metric, model)
 ```
 
 Text-to-SQL (letting the model write its own queries) is more flexible, but

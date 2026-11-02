@@ -116,7 +116,7 @@ def test_anomalies_limit_falls_back_to_default_on_bad_type():
 def test_get_anomalies_empty_reports_zero_rows():
     tools = make_tools(anomalies=lambda d, limit: pd.DataFrame())
     out = tools.get_anomalies()
-    assert out == {"rows": 0, "device_id": "all", "limit_used": 10}
+    assert out == {"rows": 0, "device_id": "all", "hours_used": None, "limit_used": 10}
 
 
 def test_get_forecast_empty_reports_zero_rows():
@@ -233,6 +233,84 @@ def test_get_anomalies_caps_note_length_and_tags_taipei_time():
     row = out["anomalies"][0]
     assert row["time"] == "2026-01-01 12:00 (Asia/Taipei)"
     assert len(row["note"]) == 120
+
+
+def test_get_anomalies_hours_filters_out_rows_outside_the_window(monkeypatch):
+    now = pd.Timestamp("2026-06-01 12:00", tz="Asia/Taipei")
+    monkeypatch.setattr(pd.Timestamp, "now", classmethod(lambda cls, tz=None: now.tz_convert(tz) if tz else now))
+    df = pd.DataFrame(
+        {
+            "device_id": ["esp32-aqua-01", "esp32-aqua-01"],
+            "ts": [now - pd.Timedelta(hours=2), now - pd.Timedelta(hours=20)],
+            "metric": ["temperature", "temperature"],
+            "value": [31.0, 32.0],
+            "method": ["threshold", "threshold"],
+            "note": [None, None],
+        }
+    )
+    tools = make_tools(anomalies=lambda d, limit: df)
+
+    out = tools.get_anomalies(hours=8)
+
+    assert out["hours_used"] == 8
+    assert out["rows"] == 1  # only the 2h-old row is within the 8h window
+    assert len(out["anomalies"]) == 1
+
+
+def test_get_anomalies_hours_rows_count_not_capped_by_limit(monkeypatch):
+    """`rows` must reflect the TRUE count in the window even when it
+    exceeds `limit` — the detail list is what's capped, not the count."""
+    now = pd.Timestamp("2026-06-01 12:00", tz="Asia/Taipei")
+    monkeypatch.setattr(pd.Timestamp, "now", classmethod(lambda cls, tz=None: now.tz_convert(tz) if tz else now))
+    df = pd.DataFrame(
+        {
+            "device_id": ["esp32-aqua-01"] * 5,
+            "ts": [now - pd.Timedelta(hours=h) for h in (1, 2, 3, 4, 5)],
+            "metric": ["temperature"] * 5,
+            "value": [30.0] * 5,
+            "method": ["threshold"] * 5,
+            "note": [None] * 5,
+        }
+    )
+    tools = make_tools(anomalies=lambda d, limit: df)
+
+    out = tools.get_anomalies(hours=8, limit=2)
+
+    assert out["rows"] == 5
+    assert len(out["anomalies"]) == 2
+
+
+def test_get_anomalies_without_hours_fetches_only_limit_not_the_wide_cap():
+    """No time filter requested -> old "most recent N" behavior, no need
+    to over-fetch, so the loader is called with just limit_used."""
+    captured = {}
+
+    def anomalies(device_id, limit):
+        captured["limit"] = limit
+        return pd.DataFrame()
+
+    tools = make_tools(anomalies=anomalies)
+    tools.get_anomalies(limit=5)
+    assert captured["limit"] == 5
+
+
+def test_get_anomalies_with_hours_fetches_the_wide_cap():
+    captured = {}
+
+    def anomalies(device_id, limit):
+        captured["limit"] = limit
+        return pd.DataFrame()
+
+    tools = make_tools(anomalies=anomalies)
+    tools.get_anomalies(hours=8, limit=5)
+    assert captured["limit"] == 500
+
+
+@pytest.mark.parametrize("hours_in, expected", [(0, 1), (-5, 1), (9999, 168), (24, 24)])
+def test_get_anomalies_hours_clamped_into_1_to_168(hours_in, expected):
+    tools = make_tools(anomalies=lambda d, limit: pd.DataFrame())
+    out = tools.get_anomalies(hours=hours_in)
+    assert out["hours_used"] == expected
 
 
 # ---------------------------------------------------------------- get_forecast

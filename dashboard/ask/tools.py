@@ -33,6 +33,13 @@ VALID_METRICS = ("temperature", "humidity")
 HOURS_MIN, HOURS_MAX = 1, 168
 LIMIT_MIN, LIMIT_MAX = 1, 50
 DEFAULT_ANOMALIES_LIMIT = 10
+# Internal only (never exposed in the tool schema): how many rows to pull
+# from the loader when get_anomalies is asked to filter by `hours`, so the
+# resulting count is accurate for the whole window rather than silently
+# capped at the user-facing `limit`. Anomalies are rare by design — at most
+# one per device/metric/hour (see aqua_check_thresholds() in app.py) — so
+# 500 comfortably covers even the full 168h (7-day) window in practice.
+ANOMALY_FETCH_CAP = 500
 
 
 def _fmt_taipei(ts: Any) -> str | None:
@@ -176,18 +183,40 @@ class AskTools:
             "min": {"value": round(float(min_s.min()), 1), "time": _fmt_taipei(min_s.idxmin())},
         }
 
-    def get_anomalies(self, device_id: str | None = None, limit: int = DEFAULT_ANOMALIES_LIMIT) -> dict:
+    def get_anomalies(
+        self,
+        device_id: str | None = None,
+        hours: int | None = None,
+        limit: int = DEFAULT_ANOMALIES_LIMIT,
+    ) -> dict:
         if device_id is not None:
             err = self._validate_device(device_id)
             if err:
                 return err
         limit_used = _clamp_int(limit, LIMIT_MIN, LIMIT_MAX, DEFAULT_ANOMALIES_LIMIT)
+        hours_used = _clamp_int(hours, HOURS_MIN, HOURS_MAX, HOURS_MAX) if hours is not None else None
 
-        df = self._load_anomalies(device_id, limit_used)
+        empty = {"rows": 0, "device_id": device_id or "all", "hours_used": hours_used, "limit_used": limit_used}
+        # Without an hours filter the old "most recent N" behavior is enough
+        # — fetch exactly limit_used and show all of it. With one, `rows`
+        # below must reflect the TRUE count within the window, which the
+        # user-facing limit_used must not silently cap — so fetch a much
+        # larger batch (ANOMALY_FETCH_CAP) to filter from, and separately
+        # cap just the detailed "anomalies" list to limit_used for display.
+        fetch_limit = ANOMALY_FETCH_CAP if hours_used is not None else limit_used
+        df = self._load_anomalies(device_id, fetch_limit)
         if df.empty:
-            return {"rows": 0, "device_id": device_id or "all", "limit_used": limit_used}
+            return empty
+
+        if hours_used is not None:
+            cutoff = pd.Timestamp.now(tz=TAIPEI) - pd.Timedelta(hours=hours_used)
+            df = df[df["ts"] >= cutoff]
+            if df.empty:
+                return empty
+
+        total_rows = len(df)
         rows = []
-        for _, r in df.iterrows():
+        for _, r in df.iloc[:limit_used].iterrows():
             note = r.get("note")
             rows.append(
                 {
@@ -205,7 +234,13 @@ class AskTools:
                     "note": (str(note)[:120] if note else None),
                 }
             )
-        return {"rows": len(rows), "device_id": device_id or "all", "limit_used": limit_used, "anomalies": rows}
+        return {
+            "rows": total_rows,  # true count in the window; may exceed len(anomalies) below
+            "device_id": device_id or "all",
+            "hours_used": hours_used,
+            "limit_used": limit_used,
+            "anomalies": rows,
+        }
 
     def get_forecast(self, device_id: str) -> dict:
         err = self._validate_device(device_id)
@@ -278,14 +313,27 @@ TOOL_SCHEMAS: list[dict] = [
     },
     {
         "name": "get_anomalies",
-        "description": "List the most recent flagged anomalies (threshold breaches or statistical deviations).",
+        "description": (
+            "List flagged anomalies (threshold breaches or statistical deviations), newest first. "
+            "The returned 'rows' is the true count — within the 'hours' window if given, otherwise "
+            "just how many were fetched — and can be larger than the 'anomalies' list, which is "
+            "capped to 'limit' entries of detail. Use 'rows' for counting/statistics questions; "
+            "use 'anomalies' for the per-record detail."
+        ),
         "parameters": {
             "type": "object",
             "properties": {
                 "device_id": _DEVICE_ID_OPTIONAL,
+                "hours": {
+                    "type": "integer",
+                    "description": (
+                        f"Only count/list anomalies from the last N hours, {HOURS_MIN}-{HOURS_MAX} "
+                        "(clamped if out of range). Omit for 'most recent N' with no time limit."
+                    ),
+                },
                 "limit": {
                     "type": "integer",
-                    "description": f"Max rows to return, {LIMIT_MIN}-{LIMIT_MAX} (clamped if out of range).",
+                    "description": f"Max rows of detail to return, {LIMIT_MIN}-{LIMIT_MAX} (clamped if out of range).",
                 },
             },
         },
