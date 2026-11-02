@@ -40,7 +40,13 @@ DEFAULT_MODEL = "gemini-flash-latest"  # a Google-maintained alias for the
 # moves fast enough that pinning an exact name here would go stale; GEMINI_MODEL
 # always wins when set, this is only the fallback if it's unset.
 DEFAULT_MAX_OUTPUT_TOKENS = 1024
-DEFAULT_TIMEOUT_MS = 20_000
+# Per-call HTTP timeout for a single generate_content request (one round of
+# the agent loop, not the whole question). 20s was too tight in practice —
+# a thinking-enabled model can legitimately take longer than that on a
+# question needing real reasoning (e.g. grouping/counting tool results by
+# device+metric), not just a slow network — confirmed live via Render logs:
+# "The read operation timed out" on exactly that kind of question.
+DEFAULT_TIMEOUT_MS = 60_000
 
 SYSTEM_PROMPT = (
     "你是一個 AIoT 溫溼度監測系統的資料助理。你只能透過提供的工具查詢資料,"
