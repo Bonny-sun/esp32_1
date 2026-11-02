@@ -1200,3 +1200,20 @@ exact version in code would have gone stale before merge.
   behavior to assert beyond "the value changed"; verifying it actually
   fixes the timeout needs another live re-test, same as both /ask fixes
   above.
+* **2026-11-02 (later still) — `get_anomalies` gains an `hours` filter.**
+  Noted as a known limitation while debugging the timeout above: the tool
+  could only do "most recent N" with no time bound, so a question like
+  "最近8小時有幾筆異常" had no way to actually scope to 8 hours — the model
+  could only guess from whatever the default `limit` happened to return.
+  New optional `hours` param (same 1-168 clamp as `get_stats`); when given,
+  the loader is asked for `ANOMALY_FETCH_CAP=500` rows (not just
+  `limit`) so the returned `rows` count reflects the TRUE total within the
+  window rather than being silently capped at the user-facing `limit` —
+  `limit` now only caps the `anomalies` detail list, a distinction spelled
+  out in the tool's own schema description since the model needs to know
+  `rows` can exceed `len(anomalies)`. 500 as the fetch cap leans on
+  anomalies being rare by design (§7: at most one per device/metric/hour)
+  — comfortably covers even the full 168h window without a second
+  network round trip to Supabase. 8 new tests (window filtering, the
+  rows-vs-limit distinction, the fetch-size difference with/without
+  `hours`, clamping) — 91/91 total, ruff clean.
