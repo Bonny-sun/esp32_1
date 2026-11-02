@@ -1651,9 +1651,17 @@ async def ask_page() -> None:
         with ui.card().classes(SECTION_CARD_CLASSES + " gap-3 p-4").props("flat"):
             with ui.column().classes("w-full gap-2 max-h-[55vh] min-h-[200px] overflow-y-auto"):
                 chat_log()
-            with ui.row().classes("w-full items-end gap-2"):
-                question_input = ui.input(placeholder="輸入問題，例如：最新溫度是多少？").classes("flex-grow")
-                question_input.props(f"maxlength={MAX_QUESTION_CHARS}")
+            with ui.row().classes("w-full items-center gap-2"):
+                # outlined: the default Quasar "standard" input is just a
+                # bottom border, easy to miss as a tappable field on mobile
+                # next to a solid button (user feedback from a live
+                # screenshot). min-w-0 overrides flex's own default
+                # min-width:auto, which otherwise refuses to let this input
+                # shrink below its placeholder's natural width, pushing/
+                # clipping the 送出 button on a narrow phone screen — a
+                # short placeholder isn't enough by itself to fix that.
+                question_input = ui.input(placeholder="輸入問題…").classes("flex-grow min-w-0")
+                question_input.props(f"outlined dense maxlength={MAX_QUESTION_CHARS}")
 
                 # Nested here (not a sibling of gate_or_content) so it closes
                 # over question_input/send_button directly — those are local
