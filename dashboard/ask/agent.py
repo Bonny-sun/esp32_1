@@ -11,8 +11,15 @@ Message shape passed between the agent loop and an `LLMClient` is a plain
 list of dicts — not google-genai's own `Content`/`Part` types — precisely so
 a fake LLMClient in tests doesn't need that SDK installed to participate:
     {"role": "user", "text": "..."}
-    {"role": "model", "tool_calls": [{"name": "...", "args": {...}}, ...]}
+    {"role": "model", "tool_calls": [{"name": "...", "args": {...}}, ...], "raw": <opaque, optional>}
     {"role": "tool", "name": "...", "result": {...}}
+
+"raw" on a "model" message is an escape hatch for an LLMClient implementation
+that needs to resend its own previous turn byte-for-byte rather than have the
+agent loop reconstruct an equivalent-looking one — see GeminiLLMClient's
+thought_signature handling below for why that distinction matters. The
+agent loop itself never reads or interprets "raw"; it just carries whatever
+the LLMClient that produced it put there back to that same LLMClient.
 """
 from __future__ import annotations
 
@@ -55,10 +62,17 @@ class ToolCall:
 @dataclass
 class ModelTurn:
     """One LLM response: either tool calls to make next, or a final answer.
-    Exactly one of the two is populated — `text` means "done"."""
+    Exactly one of the two is populated — `text` means "done".
+
+    `raw` is opaque, implementation-specific state an LLMClient can stash
+    here to get back unchanged on its next `generate()` call via the
+    resulting "model" message's own "raw" key — see this module's docstring.
+    Unused by the agent loop itself and by LLMClient implementations that
+    don't need it (a fake test LLM never sets or reads it)."""
 
     tool_calls: list[ToolCall] = field(default_factory=list)
     text: str | None = None
+    raw: Any = None
 
 
 class LLMClient(Protocol):
@@ -92,7 +106,13 @@ def answer_question(question: str, *, llm: LLMClient, tools: AskTools, max_round
         turn = llm.generate(messages)
         if not turn.tool_calls:
             return turn.text or "很抱歉,目前無法產生回答,請換個方式提問。"
-        messages.append({"role": "model", "tool_calls": [{"name": tc.name, "args": tc.args} for tc in turn.tool_calls]})
+        messages.append(
+            {
+                "role": "model",
+                "tool_calls": [{"name": tc.name, "args": tc.args} for tc in turn.tool_calls],
+                "raw": turn.raw,
+            }
+        )
         for tc in turn.tool_calls:
             result = _execute_tool(tools, tc.name, tc.args)
             messages.append({"role": "tool", "name": tc.name, "result": result})
@@ -143,7 +163,16 @@ class GeminiLLMClient:
         response = self._client.models.generate_content(model=self._model, contents=contents, config=self._config)
         calls = response.function_calls or []
         if calls:
-            return ModelTurn(tool_calls=[ToolCall(name=c.name, args=dict(c.args or {})) for c in calls])
+            # Keep the model's own Content object (not just name/args) so it
+            # can be resent byte-for-byte next round — see _to_content's
+            # "model" branch and this module's docstring. A model with
+            # "thinking" enabled attaches a thought_signature to each
+            # function_call Part; rebuilding a fresh Part from only name+args
+            # drops that signature, which the API then rejects with
+            # INVALID_ARGUMENT ("Function call is missing a
+            # thought_signature") on the very next turn.
+            raw = response.candidates[0].content
+            return ModelTurn(tool_calls=[ToolCall(name=c.name, args=dict(c.args or {})) for c in calls], raw=raw)
         return ModelTurn(text=(response.text or "").strip() or None)
 
     def _to_content(self, message: dict):
@@ -152,6 +181,15 @@ class GeminiLLMClient:
         if role == "user":
             return types.Content(role="user", parts=[types.Part.from_text(text=message["text"])])
         if role == "model":
+            raw = message.get("raw")
+            if raw is not None:
+                return raw
+            # Fallback for a hypothetical non-Gemini-produced "model" message
+            # (never hit in practice — GeminiLLMClient is the only producer
+            # of "model" messages in this codebase, and it always sets
+            # "raw"). Kept rather than asserting, since losing
+            # thought_signature here would be a silent quality regression,
+            # not a crash, for any future caller that reaches it.
             parts = [types.Part.from_function_call(name=tc["name"], args=tc["args"]) for tc in message["tool_calls"]]
             return types.Content(role="model", parts=parts)
         if role == "tool":

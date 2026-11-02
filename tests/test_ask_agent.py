@@ -140,6 +140,54 @@ def test_gemini_client_builds_tool_declarations_from_all_schemas():
     assert {d.name for d in declared} == {s["name"] for s in TOOL_SCHEMAS}
 
 
+def test_answer_question_threads_raw_through_to_the_model_message():
+    """The agent loop doesn't interpret ModelTurn.raw — it just has to carry
+    it, unchanged, onto the resulting "model" message's "raw" key so an
+    LLMClient can get it back on its next generate() call."""
+    sentinel = object()
+    llm = ScriptedLLM(
+        [
+            ModelTurn(tool_calls=[ToolCall(name="list_devices", args={})], raw=sentinel),
+            ModelTurn(text="ok"),
+        ]
+    )
+    answer_question("?", llm=llm, tools=make_tools())
+    assert llm.calls[1][1]["raw"] is sentinel
+
+
+def test_gemini_to_content_resends_the_original_model_content_unchanged():
+    """Regression test for a live bug: the Gemini API rejects a resent
+    function-call turn that's missing the original thought_signature
+    (400 INVALID_ARGUMENT, "Function call is missing a thought_signature")
+    if the turn was rebuilt from scratch (Part.from_function_call only
+    carries name/args, never the signature the model originally attached).
+    GeminiLLMClient must resend response.candidates[0].content byte-for-byte
+    via the "raw" key instead of reconstructing an equivalent-looking Part."""
+    client = GeminiLLMClient(api_key="unit-test-key-not-a-real-credential", model="gemini-flash-latest")
+    types = client._types
+    original_part = types.Part.from_function_call(name="get_latest", args={"device_id": "esp32-aqua-01"})
+    original_part.thought_signature = b"opaque-signature-bytes"
+    original_content = types.Content(role="model", parts=[original_part])
+
+    message = {
+        "role": "model",
+        "tool_calls": [{"name": "get_latest", "args": {"device_id": "esp32-aqua-01"}}],
+        "raw": original_content,
+    }
+    resent = client._to_content(message)
+
+    assert resent is original_content
+    assert resent.parts[0].thought_signature == b"opaque-signature-bytes"
+
+
+def test_gemini_to_content_falls_back_when_raw_is_missing():
+    client = GeminiLLMClient(api_key="unit-test-key-not-a-real-credential", model="gemini-flash-latest")
+    message = {"role": "model", "tool_calls": [{"name": "list_devices", "args": {}}], "raw": None}
+    resent = client._to_content(message)
+    assert resent.parts[0].function_call.name == "list_devices"
+    assert resent.parts[0].thought_signature is None
+
+
 # ---------------------------------------------------------------- RateLimiter
 
 def test_rate_limiter_allows_then_blocks_per_minute():
