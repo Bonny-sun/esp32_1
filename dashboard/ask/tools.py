@@ -1,7 +1,8 @@
 """Read-only data tools the LLM can call from the /ask page.
 
-No SQL ever reaches the model — it can only invoke the five functions below,
-each with a fixed, validated argument shape. `AskTools` takes its data access
+No SQL ever reaches the model — it can only invoke the fixed set of
+functions below, each with a validated argument shape. `AskTools` takes its
+data access
 as constructor-injected loader callables (the same `load_devices`,
 `load_history`, `load_anomalies`, `load_forecasts`, `load_all_latest` already
 defined in app.py) rather than importing app.py or talking to Supabase
@@ -30,16 +31,19 @@ import pandas as pd
 
 TAIPEI = "Asia/Taipei"
 VALID_METRICS = ("temperature", "humidity")
-HOURS_MIN, HOURS_MAX = 1, 168
+HOURS_MIN, HOURS_MAX = 1, 720  # 720h = 30 days, matching the dashboard's own 30-day history view
+DAYS_MIN, DAYS_MAX = 1, 30  # get_daily_stats' own window, same 30-day ceiling expressed in days
 LIMIT_MIN, LIMIT_MAX = 1, 50
 DEFAULT_ANOMALIES_LIMIT = 10
 # Internal only (never exposed in the tool schema): how many rows to pull
 # from the loader when get_anomalies is asked to filter by `hours`, so the
 # resulting count is accurate for the whole window rather than silently
-# capped at the user-facing `limit`. Anomalies are rare by design — at most
-# one per device/metric/hour (see aqua_check_thresholds() in app.py) — so
-# 500 comfortably covers even the full 168h (7-day) window in practice.
-ANOMALY_FETCH_CAP = 500
+# capped at the user-facing `limit`. Anomalies are rare in the steady state
+# (at most one per device/metric/hour — see aqua_check_thresholds() in
+# app.py) but a live demo has shown bursts of ~2/hour across 2 devices while
+# a threshold is actively tripped; 3000 leaves comfortable headroom over
+# that rate for the full 720h (30-day) window without a second round trip.
+ANOMALY_FETCH_CAP = 3000
 
 
 def _fmt_taipei(ts: Any) -> str | None:
@@ -183,6 +187,85 @@ class AskTools:
             "min": {"value": round(float(min_s.min()), 1), "time": _fmt_taipei(min_s.idxmin())},
         }
 
+    def get_daily_stats(self, device_id: str, metric: str, days: int) -> dict:
+        """Same avg/max/min shape as get_stats, but one entry per calendar
+        day instead of one aggregate for the whole window — for "each day
+        this week" questions get_stats structurally cannot answer (it only
+        ever returns a single summary across its whole `hours` window)."""
+        err = self._validate_device(device_id)
+        if err:
+            return err
+        if metric not in VALID_METRICS:
+            return {"error": f"invalid metric {metric!r}; must be one of {list(VALID_METRICS)}"}
+        days_used = _clamp_int(days, DAYS_MIN, DAYS_MAX, DAYS_MAX)
+        hours_used = days_used * 24
+
+        df = self._load_history(device_id, hours_used)
+        empty = {"rows": 0, "device_id": device_id, "metric": metric, "days_used": days_used}
+        if df.empty:
+            return empty
+
+        # Same raw-vs-hourly distinction as get_stats (see its own comment),
+        # just grouped by calendar day afterwards. The index is already
+        # Asia/Taipei wall-clock (both branches — see this module's
+        # docstring), so grouping by .date directly gives Taipei calendar
+        # days with no further tz handling needed.
+        daily: list[dict] = []
+        if hours_used <= 48:
+            if metric not in df.columns:
+                return empty
+            s = df[metric].dropna()
+            if s.empty:
+                return empty
+            for date, group in s.groupby(s.index.date):
+                daily.append(
+                    {
+                        "date": date.isoformat(),
+                        "avg": round(float(group.mean()), 1),
+                        "max": {"value": round(float(group.max()), 1), "time": _fmt_taipei(group.idxmax())},
+                        "min": {"value": round(float(group.min()), 1), "time": _fmt_taipei(group.idxmin())},
+                    }
+                )
+        else:
+            avg_col, max_col, min_col = f"{metric}_avg", f"{metric}_max", f"{metric}_min"
+            needed = [avg_col, max_col, min_col]
+            if not all(c in df.columns for c in needed):
+                return empty
+            # dropna() on all three together (not per-column, as get_stats
+            # does) keeps each day's avg/max/min rows aligned to the same
+            # set of hours — the hourly rollup writes all three from one
+            # pass per bucket, so they're never null independently in
+            # practice, but grouping a single pre-aligned frame is simpler
+            # than reconciling three separately-grouped Series either way.
+            sub = df[needed].dropna()
+            if sub.empty:
+                return empty
+            for date, group in sub.groupby(sub.index.date):
+                daily.append(
+                    {
+                        "date": date.isoformat(),
+                        "avg": round(float(group[avg_col].mean()), 1),
+                        "max": {
+                            "value": round(float(group[max_col].max()), 1),
+                            "time": _fmt_taipei(group[max_col].idxmax()),
+                        },
+                        "min": {
+                            "value": round(float(group[min_col].min()), 1),
+                            "time": _fmt_taipei(group[min_col].idxmin()),
+                        },
+                    }
+                )
+
+        if not daily:
+            return empty
+        return {
+            "rows": len(daily),
+            "device_id": device_id,
+            "metric": metric,
+            "days_used": days_used,
+            "daily": daily,  # chronological, oldest first — groupby sorts by key
+        }
+
     def get_anomalies(
         self,
         device_id: str | None = None,
@@ -295,8 +378,10 @@ TOOL_SCHEMAS: list[dict] = [
     {
         "name": "get_stats",
         "description": (
-            "Get average/max/min (with when the max/min happened) for temperature or humidity "
-            "over the last N hours for one device."
+            "Get ONE average/max/min summary (with when the max/min happened) for temperature or "
+            "humidity, aggregated across the entire last N hours for one device. For a question "
+            "asking about each day separately (e.g. 'each day this week'), use get_daily_stats "
+            "instead — this tool cannot break its result down by day."
         ),
         "parameters": {
             "type": "object",
@@ -309,6 +394,27 @@ TOOL_SCHEMAS: list[dict] = [
                 },
             },
             "required": ["device_id", "metric", "hours"],
+        },
+    },
+    {
+        "name": "get_daily_stats",
+        "description": (
+            "Get average/max/min (with when the max/min happened) for temperature or humidity, "
+            "ONE entry per calendar day, for the last N days for one device. Use this for any "
+            "question about each day separately (e.g. 'each day's high/low this week') instead "
+            "of get_stats, which only returns one summary for the whole period."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "device_id": _DEVICE_ID_REQUIRED,
+                "metric": {"type": "string", "enum": list(VALID_METRICS)},
+                "days": {
+                    "type": "integer",
+                    "description": f"Number of most recent days, {DAYS_MIN}-{DAYS_MAX} (clamped if out of range).",
+                },
+            },
+            "required": ["device_id", "metric", "days"],
         },
     },
     {
