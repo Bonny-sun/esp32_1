@@ -157,6 +157,17 @@ body.theme-tech .q-table tbody tr:nth-child(even) { background-color: #16204a !i
    page-wide light text color meant for the dark page behind them, making
    unselected items nearly invisible against the popup's white background. */
 body.theme-tech .q-menu { color: #1e293b !important; }
+
+/* /ask's assistant replies render as markdown (the model's own output
+   naturally uses **bold**/bullet lists) — markdown2's generated <p>/<ul>
+   use normal browser block-spacing (~1em), which reads as too loose inside
+   a compact chat bubble. Tightened scoped to just this class so it doesn't
+   touch any other text on the page. */
+.ask-markdown p { margin: 0.2em 0; }
+.ask-markdown p:first-child { margin-top: 0; }
+.ask-markdown p:last-child { margin-bottom: 0; }
+.ask-markdown ul, .ask-markdown ol { margin: 0.2em 0; padding-left: 1.3em; }
+.ask-markdown li { margin: 0.1em 0; }
 """
 
 
@@ -1616,7 +1627,23 @@ async def ask_page() -> None:
                     ("bg-sky-600 text-white" if is_user else "bg-gray-100 text-gray-800")
                     + " max-w-[85%] p-3"
                 ).props("flat"):
-                    ui.label(m["text"]).classes("whitespace-pre-wrap text-sm")
+                    if is_user:
+                        # Plain text, not markdown: this is an exact echo of
+                        # what the visitor typed, not model output — no
+                        # reason to interpret any *asterisks* they happened
+                        # to type as formatting.
+                        ui.label(m["text"]).classes("whitespace-pre-wrap text-sm")
+                    else:
+                        # The model's answers commonly use **bold**/bullet
+                        # lists (its own habit, not something the system
+                        # prompt asks for) — rendered as markdown so that
+                        # shows up as actual formatting instead of literal
+                        # asterisks. sanitize=True (ui.markdown's default)
+                        # runs the content through DOMPurify client-side, so
+                        # this stays safe even though the text ultimately
+                        # originates from a public, unauthenticated LLM
+                        # response on a public page.
+                        ui.markdown(m["text"]).classes("text-sm ask-markdown")
 
     @ui.refreshable
     async def gate_or_content() -> None:
@@ -1651,7 +1678,14 @@ async def ask_page() -> None:
         with ui.card().classes(SECTION_CARD_CLASSES + " gap-3 p-4").props("flat"):
             with ui.column().classes("w-full gap-2 max-h-[55vh] min-h-[200px] overflow-y-auto"):
                 chat_log()
-            with ui.row().classes("w-full items-center gap-2"):
+            # flex-nowrap: Quasar's .row utility defaults to flex-wrap, so
+            # once the input (with its outlined box) plus the button's
+            # combined natural width exceeded the card on a narrower real
+            # phone than this was first checked on, the button dropped to
+            # its own line below instead of staying beside the input
+            # (live screenshot) — same fix already used elsewhere in this
+            # file (nav_bar's footer row) for the identical Quasar behavior.
+            with ui.row().classes("w-full items-center gap-2 flex-nowrap"):
                 # outlined: the default Quasar "standard" input is just a
                 # bottom border, easy to miss as a tappable field on mobile
                 # next to a solid button (user feedback from a live
