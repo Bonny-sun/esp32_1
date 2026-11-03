@@ -47,6 +47,17 @@ DEFAULT_MAX_OUTPUT_TOKENS = 1024
 # device+metric), not just a slow network — confirmed live via Render logs:
 # "The read operation timed out" on exactly that kind of question.
 DEFAULT_TIMEOUT_MS = 60_000
+# How many extra attempts a single agent-loop round gets if the Gemini call
+# itself fails transiently (a timeout, or the API returning 5xx) — "重試機制"
+# alongside the timeout above. 2 retries (3 attempts total) rather than more:
+# each one costs up to DEFAULT_TIMEOUT_MS of real wait, and this already runs
+# inside one round of answer_question's own MAX_TOOL_ROUNDS backstop, so
+# piling on retries here risks the whole request running long rather than
+# actually recovering. Not applied to a 4xx (ClientError) — a bad request
+# (e.g. the missing-thought_signature bug) fails identically on every retry,
+# so retrying it only burns quota for no chance of success.
+MAX_GENERATE_RETRIES = 2
+RETRY_BACKOFF_SECONDS = 1.0
 
 SYSTEM_PROMPT = (
     "你是一個 AIoT 溫溼度監測系統的資料助理。你只能透過提供的工具查詢資料,"
@@ -141,15 +152,21 @@ class GeminiLLMClient:
         *,
         max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS,
         timeout_ms: int = DEFAULT_TIMEOUT_MS,
+        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
-        from google import genai  # imported lazily: nothing else in this file,
-        # and nothing in tools.py, needs google-genai importable — keeps a
+        # All imported lazily: nothing else in this file, and nothing in
+        # tools.py, needs google-genai or httpx importable — keeps a
         # fake-LLM test run (and any future caller with no key configured)
         # from needing the real SDK on the path at all.
+        import httpx
+        from google import genai
+        from google.genai import errors as genai_errors
 
         self._types = genai.types
         self._client = genai.Client(api_key=api_key)
         self._model = model
+        self._sleep = sleep
+        self._retryable_errors = (httpx.TimeoutException, genai_errors.ServerError)
         decls = [
             self._types.FunctionDeclaration(
                 name=s["name"], description=s["description"], parameters_json_schema=s["parameters"]
@@ -166,7 +183,7 @@ class GeminiLLMClient:
 
     def generate(self, messages: list[dict]) -> ModelTurn:
         contents = [self._to_content(m) for m in messages]
-        response = self._client.models.generate_content(model=self._model, contents=contents, config=self._config)
+        response = self._generate_with_retry(contents)
         calls = response.function_calls or []
         if calls:
             # Keep the model's own Content object (not just name/args) so it
@@ -180,6 +197,25 @@ class GeminiLLMClient:
             raw = response.candidates[0].content
             return ModelTurn(tool_calls=[ToolCall(name=c.name, args=dict(c.args or {})) for c in calls], raw=raw)
         return ModelTurn(text=(response.text or "").strip() or None)
+
+    def _generate_with_retry(self, contents):
+        """Retry a transient failure (timeout, 5xx) up to MAX_GENERATE_RETRIES
+        extra times with a short fixed backoff between attempts; a non-
+        transient failure (4xx) is raised immediately, unretried."""
+        for attempt in range(MAX_GENERATE_RETRIES + 1):
+            try:
+                return self._client.models.generate_content(
+                    model=self._model, contents=contents, config=self._config
+                )
+            except self._retryable_errors as exc:
+                if attempt >= MAX_GENERATE_RETRIES:
+                    raise
+                logger.warning(
+                    "ask: Gemini call failed (%s), retrying (%d/%d)",
+                    exc, attempt + 1, MAX_GENERATE_RETRIES,
+                )
+                self._sleep(RETRY_BACKOFF_SECONDS)
+        raise AssertionError("unreachable")  # pragma: no cover
 
     def _to_content(self, message: dict):
         types = self._types
