@@ -188,6 +188,91 @@ def test_gemini_to_content_falls_back_when_raw_is_missing():
     assert resent.parts[0].thought_signature is None
 
 
+# ---------------------------------------------------------- generate() retry
+# Regression coverage for the real incident (PRs #146/#147): the API spec
+# promised a retry alongside the timeout, but only the timeout was ever
+# wired up. These drive _generate_with_retry() directly against a scripted
+# fake of the google-genai call, with a captured (not real) sleep, so a
+# retry round-trips in milliseconds rather than actually waiting.
+
+def _client_with_fake_call(monkeypatch, side_effects):
+    """A GeminiLLMClient whose underlying SDK call is replaced by a
+    canned sequence of return values / exceptions, and whose backoff sleep
+    is captured instead of actually executed."""
+    sleeps: list[float] = []
+    client = GeminiLLMClient(
+        api_key="unit-test-key-not-a-real-credential",
+        model="gemini-flash-latest",
+        sleep=sleeps.append,
+    )
+    calls = {"n": 0}
+
+    def fake_generate_content(**kwargs):
+        i = calls["n"]
+        calls["n"] += 1
+        effect = side_effects[i]
+        if isinstance(effect, BaseException):
+            raise effect
+        return effect
+
+    monkeypatch.setattr(client._client.models, "generate_content", fake_generate_content)
+    return client, calls, sleeps
+
+
+def _fake_response(text="ok"):
+    import types
+
+    return types.SimpleNamespace(function_calls=None, text=text, candidates=None)
+
+
+def test_generate_retries_a_timeout_then_succeeds(monkeypatch):
+    import httpx
+
+    client, calls, sleeps = _client_with_fake_call(
+        monkeypatch, [httpx.ReadTimeout("timed out"), _fake_response("recovered")]
+    )
+    turn = client.generate([{"role": "user", "text": "hi"}])
+    assert turn.text == "recovered"
+    assert calls["n"] == 2
+    assert sleeps == [1.0]
+
+
+def test_generate_retries_a_server_error_then_succeeds(monkeypatch):
+    from google.genai import errors as genai_errors
+
+    server_error = genai_errors.ServerError(503, {"error": {"message": "unavailable"}})
+    client, calls, sleeps = _client_with_fake_call(monkeypatch, [server_error, _fake_response("recovered")])
+    turn = client.generate([{"role": "user", "text": "hi"}])
+    assert turn.text == "recovered"
+    assert calls["n"] == 2
+    assert sleeps == [1.0]
+
+
+def test_generate_gives_up_after_max_retries(monkeypatch):
+    import httpx
+
+    timeouts = [httpx.ReadTimeout("timed out")] * 10  # more than enough attempts
+    client, calls, sleeps = _client_with_fake_call(monkeypatch, timeouts)
+    with pytest.raises(httpx.ReadTimeout):
+        client.generate([{"role": "user", "text": "hi"}])
+    # MAX_GENERATE_RETRIES extra attempts beyond the first = 1 + MAX_GENERATE_RETRIES total
+    from ask.agent import MAX_GENERATE_RETRIES
+
+    assert calls["n"] == MAX_GENERATE_RETRIES + 1
+    assert len(sleeps) == MAX_GENERATE_RETRIES
+
+
+def test_generate_does_not_retry_a_client_error(monkeypatch):
+    from google.genai import errors as genai_errors
+
+    client_error = genai_errors.ClientError(400, {"error": {"message": "invalid argument"}})
+    client, calls, sleeps = _client_with_fake_call(monkeypatch, [client_error, _fake_response("unused")])
+    with pytest.raises(genai_errors.ClientError):
+        client.generate([{"role": "user", "text": "hi"}])
+    assert calls["n"] == 1
+    assert sleeps == []
+
+
 # ---------------------------------------------------------------- RateLimiter
 
 def test_rate_limiter_allows_then_blocks_per_minute():
