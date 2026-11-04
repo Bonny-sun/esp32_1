@@ -118,7 +118,7 @@ NAV_LINKS = [
 # doesn't reliably let a later same-specificity rule win by source order
 # alone (see the `max-md:hidden` vs `hidden md:flex` finding from the same
 # session) — important sidesteps that gamble entirely.
-THEMES = {"classic": "經典藍", "tech": "科技感"}
+THEMES = {"classic": "經典藍（淺色）", "tech": "科技感（深色）"}
 DEFAULT_THEME = "classic"
 THEME_CSS = """
 body { background-color: #dbeafe !important; }
