@@ -22,6 +22,14 @@ Output values are deliberately thin: a device_id, a metric name, a number, a
 timestamp — never a raw DB row or long free-text blob — so the model has
 exact facts to answer from instead of a wall of text to summarize (and
 possibly hallucinate around).
+
+可用工具一覽（AskTools 的方法，AI 只能呼叫這幾個）:
+    list_devices    — 列出所有裝置
+    get_latest      — 某裝置（或全部）最新一筆讀值
+    get_stats       — 某裝置某指標近 N 小時的統計(平均/最大/最小)
+    get_daily_stats — 某裝置某指標近 N 天的每日統計
+    get_anomalies   — 查異常警戒紀錄
+    get_forecast    — 查 AI 預測結果
 """
 from __future__ import annotations
 

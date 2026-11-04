@@ -117,12 +117,14 @@ def answer_question(question: str, *, llm: LLMClient, tools: AskTools, max_round
     `max_rounds` — this is the cost/latency backstop the spec calls for, a
     stuck model can cost at most `max_rounds` tool calls plus `max_rounds`
     LLM calls per question, never an unbounded loop."""
+    # 問答流程：每一輪 1)把對話紀錄丟給LLM 2)如果LLM要求查資料就執行對應
+    # 工具、把結果丟回去給它 3)重複，直到LLM給出最終文字答案，或輪數用盡。
     question = question.strip()[:MAX_QUESTION_CHARS]
     messages: list[dict] = [{"role": "user", "text": question}]
     for _ in range(max_rounds):
-        turn = llm.generate(messages)
+        turn = llm.generate(messages)                      # 1. 問 LLM
         if not turn.tool_calls:
-            return turn.text or "很抱歉,目前無法產生回答,請換個方式提問。"
+            return turn.text or "很抱歉,目前無法產生回答,請換個方式提問。"  # 已是最終答案
         messages.append(
             {
                 "role": "model",
@@ -130,9 +132,9 @@ def answer_question(question: str, *, llm: LLMClient, tools: AskTools, max_round
                 "raw": turn.raw,
             }
         )
-        for tc in turn.tool_calls:
+        for tc in turn.tool_calls:                         # 2. 執行它要求的工具
             result = _execute_tool(tools, tc.name, tc.args)
-            messages.append({"role": "tool", "name": tc.name, "result": result})
+            messages.append({"role": "tool", "name": tc.name, "result": result})  # 3. 結果餵回去，進下一輪
     return "無法在限定的查詢次數內完成這個問題,請換個方式提問或縮小問題範圍。"
 
 

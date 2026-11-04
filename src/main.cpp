@@ -750,6 +750,10 @@ void tickMqtt() {
 }
 
 // ============================ setup / loop ===============================
+//  開機流程 (setup，只跑一次): 讀NVS設定 -> 組MQTT topic -> 初始化LED/OLED/
+//  DHT -> 跑WiFiManager連線或開設定入口網站 -> 設定MQTT連線參數。
+//  主迴圈 (loop，重複執行): 見下方 loop() 內 1~6 的步驟註解。
+// ============================================================================
 
 void setup() {
   Serial.begin(115200);
@@ -871,7 +875,7 @@ void setup() {
 }
 
 void loop() {
-  tickWiFi();
+  tickWiFi();          // 1. 維持/重連 WiFi，順便處理設定入口網站
 
   // Deferred post-portal restart: reboot once the newly-entered Wi-Fi has
   // actually connected (creds are now in NVS), or after a 15 s grace period
@@ -883,10 +887,10 @@ void loop() {
     ESP.restart();
   }
 
-  tickMqtt();
-  tickSensor();
-  tickPublish();
-  tickDisplay();
-  tickLed();
+  tickMqtt();           // 2. 維持/重連 MQTT，並收下雲端送來的 cmd 指令
+  tickSensor();         // 3. 讀 DHT 感測器，更新目前溫濕度與寵物心情
+  tickPublish();        // 4. 每隔 PUBLISH_MS 把感測資料發布到 MQTT
+  tickDisplay();        // 5. 重繪 OLED(寵物動畫 + 數值)
+  tickLed();            // 6. 更新 RGB LED 呼吸燈效果
   // no delay(): loop spins freely, each tick self-throttles on millis()
 }

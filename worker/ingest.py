@@ -200,12 +200,17 @@ def notify_pending_threshold_alerts(device_id: str) -> None:
 
 
 def handle_payload(topic: str, raw: bytes) -> None:
+    """一筆 MQTT 封包進來後的完整處理流程：
+    1) 解析 JSON  2) 整理成資料庫欄位  3) 寫入裝置狀態 + 遙測資料
+    4) 檢查有沒有尚未推播的異常警戒，推 LINE 通知。"""
+    # ---- 1. 解析 JSON ----
     try:
         p = json.loads(raw)
     except json.JSONDecodeError as exc:
         print(f"[skip] bad JSON on {topic}: {exc}", flush=True)
         return
 
+    # ---- 2. 整理成資料庫欄位 ----
     metrics = p.get("metrics") or {}
     net = p.get("net") or {}
     parts = topic.split("/")
@@ -243,6 +248,7 @@ def handle_payload(topic: str, raw: bytes) -> None:
     if "pet_cold" in p:
         device_row["pet_cold"] = p["pet_cold"]
 
+    # ---- 3. 寫入資料庫（裝置最新狀態 + 這筆遙測紀錄）----
     try:
         sb.table("aqua_devices").upsert(device_row, on_conflict="device_id").execute()
         sb.table("aqua_telemetry").insert(row).execute()
@@ -251,6 +257,7 @@ def handle_payload(topic: str, raw: bytes) -> None:
         print(f"[error] insert failed for {device_id}: {exc}", flush=True)
         return
 
+    # ---- 4. 檢查是否有尚未推播的異常警戒，推送 LINE 通知 ----
     notify_pending_threshold_alerts(device_id)
 
 
@@ -272,6 +279,8 @@ def on_message(client, userdata, msg):
 
 
 def main() -> int:
+    # 開機流程：建立 MQTT client -> 設定帳密/TLS -> 掛上 callback -> 連線 ->
+    # 進入 loop_forever()，往後每筆訊息都觸發 on_message -> handle_payload()。
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="render-ingest")
     client.username_pw_set(MQTT_USER, MQTT_PASS)
     client.tls_set(tls_version=ssl.PROTOCOL_TLS_CLIENT)   # validates HiveMQ's cert

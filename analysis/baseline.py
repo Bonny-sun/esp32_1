@@ -315,16 +315,22 @@ def list_device_ids() -> list[str]:
 
 
 def process_device(device_id: str) -> None:
+    """單一裝置的完整處理流程（對應上面的 1~4 區塊）：
+    1.載入歷史資料 -> 2.整理成特徵 -> 3a.預測 -> 3b.異常偵測 -> 4.寫回資料庫。"""
+    # ---- 1. 載入歷史資料 ----
     df = load_history(device_id, LOOKBACK_H)
     if df.empty:
         print(f"[{device_id}] no telemetry yet — collect some data first")
         return
 
+    # ---- 2. 整理成特徵（補值、算移動平均/標準差）----
     feats = build_features(df, FEATURE_COLS)
     print(f"[{device_id}] {len(feats)} resampled rows | features = {FEATURE_COLS}")
 
+    # ---- 3a. 預測：ewma+drift（基準模型）----
     forecasts = [forecast(device_id, feats, c, HORIZON_STEPS) for c in FEATURE_COLS]
 
+    # ---- 3a'. 預測：gbm 挑戰模型（獨立抓更長的歷史資料來訓練）----
     # GBM gets its own, longer-history feature frame (see GBM_LOOKBACK_H) —
     # df is non-empty at this point, and GBM_LOOKBACK_H > LOOKBACK_H with the
     # same "now" upper bound, so gbm_df is guaranteed non-empty too.
@@ -340,19 +346,24 @@ def process_device(device_id: str) -> None:
             f"  [{device_id}] forecast {f['model']:10s} {f['metric']:14s} +{f['horizon_min']:>3}min -> "
             f"{f['yhat']:>7}  [{f['yhat_lower']}, {f['yhat_upper']}]"
         )
+    # ---- 4a. 寫回資料庫：預測結果 ----
     save("aqua_forecasts", forecasts)
 
+    # ---- 3b. 異常偵測 ----
     if len(FEATURE_COLS) >= 3:
         anomalies = detect_multivariate(device_id, feats, FEATURE_COLS)
     else:
         anomalies = detect_univariate(device_id, feats, FEATURE_COLS)
     anomalies = dedupe_anomalies(device_id, anomalies)
     print(f"  [{device_id}] {len(anomalies)} new anomalies")
+    # ---- 4b. 寫回資料庫：異常紀錄 ----
     save("aqua_anomalies", anomalies)
 
 
 # ---- main ----------------------------------------------------------
 def main() -> None:
+    # 排程工作的進入點（每隔一段時間被 cron 呼叫一次）：
+    # 列出所有裝置 -> 對每台裝置各跑一次 process_device() 完整流程。
     device_ids = list_device_ids()
     if not device_ids:
         print("no devices registered in aqua_devices")

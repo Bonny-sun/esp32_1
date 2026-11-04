@@ -10,6 +10,17 @@
     cp .env.example .env        # 然後編輯
     pip install -r requirements.txt
     python app.py
+
+本檔案架構一覽（由上往下）:
+    1. 主題 / 共用常數 (LABEL/UNIT/ICON/NAV_LINKS...)
+    2. 資料庫連線 (sb())
+    3. 簡易快取 (cached()/clear_cache())
+    4. 讀取資料 (load_*: 從 Supabase 撈資料)
+    5. 寫入/控制裝置 (save_*/publish_*: 存設定回 DB、發 MQTT 指令給 ESP32)
+    6. 介面共用元件 (nav_bar)
+    7. 五個頁面：/ 首頁、/forecast AI預測、/anomalies 異常警戒、
+       /ask AI問答、/admin 後台設定
+    8. 背景快取預熱迴圈 (_warm_cache_loop)
 """
 from __future__ import annotations
 
@@ -246,6 +257,7 @@ ADMIN_AUTH_REQUIRED = bool(DASH_USERNAME or DASH_PASSWORD)
 _sb_local = threading.local()
 
 
+# ---------------------------------------------------------------- 資料庫連線
 def sb():
     if not hasattr(_sb_local, "client"):
         _sb_local.client = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_KEY"])
@@ -292,6 +304,7 @@ def clear_cache() -> None:
     _cache.clear()
 
 
+# ---------------------------------------------------------------- 讀取資料 (load_*)
 @cached(30)
 def load_devices():
     return sb().table("aqua_devices").select("*").order("device_id").execute().data
@@ -525,6 +538,7 @@ def save_thresholds(device_id: str, edits: dict) -> None:
     clear_cache()
 
 
+# ---------------------------------------------------------------- 寫入/控制裝置 (save_*/publish_*)
 def publish_cmd(site_id: str, device_id: str, payload: dict) -> None:
     """Publish a retained MQTT command the ESP32 applies immediately (no
     reboot) and persists to its own NVS. Retained so a currently offline
