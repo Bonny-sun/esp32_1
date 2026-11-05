@@ -1,5 +1,36 @@
 #!/usr/bin/env python3
 """
+╔═══════════════════════════════════ 檔案導覽 ═══════════════════════════════════╗
+
+類別：後端（Backend）── 部署在 Render 的「背景工作程式」，沒有畫面，24 小時常駐。
+目的：ESP32 把感測資料丟到 MQTT 雲端信箱，這支程式負責「收信」，共做 3 件事：
+      1. 收到就整理好、存進資料庫(Supabase)
+      2. 數值異常時推 LINE 通知
+      3. 每 30 分鐘順便跑一次 AI 預測（analysis/baseline.py）
+資料流向：ESP32 ──MQTT──> 【本程式】 ──> Supabase 資料庫 ──> 儀表板網頁 / LINE
+
+程式架構：
+  一、設定與常數          【1-1】載入 .env   【1-2】讀環境變數   【1-3】指標名稱與單位
+  二、共用小工具          【2-1】取得現在時間(UTC)   【2-2】UTC 轉台北時間
+  三、LINE 推播           【3-1】判斷是否暫停推播   【3-2】送出 LINE 訊息
+                          【3-3】找出尚未推播的警戒並組成訊息
+  四、處理一筆 MQTT 封包  【4-1】解析 JSON   【4-2】整理成資料庫欄位
+                          【4-3】寫入資料庫   【4-4】檢查警戒、推 LINE
+  五、MQTT 連線事件       【5-1】連上後訂閱   【5-2】斷線   【5-3】收到訊息
+  六、AI 預測排程         【6-1】跑一次預測   【6-2】每 30 分鐘重複
+  七、程式入口 main()     【7-1】建立 MQTT client   【7-2】連線並啟動兩條工作線
+
+備註：
+  多存一個感測欄位 ........ 【4-2】(另外還要改資料庫 sql/ 與前端)
+  改 LINE 警戒訊息文字 ..... 【3-3】
+  新增/改指標中文名稱 ...... 【1-3】
+  改預測頻率 .............. 【6-2】的 FORECAST_INTERVAL_S
+  改 MQTT 訂閱主題 ......... 【1-2】的 MQTT_TOPIC
+
+╚════════════════════════════════════════════════════════════════════════════╝
+
+以下為技術備註（原文保留）：
+
 Render Background Worker — subscribe to HiveMQ Cloud (MQTT/TLS) and write
 every telemetry packet into Supabase.
 
@@ -54,6 +85,11 @@ from supabase import create_client
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "analysis"))
 import baseline  # noqa: E402
 
+# ============================================================================
+# 一、設定與常數：程式啟動時先把「連去哪、用什麼帳密」準備好
+# ============================================================================
+
+# ---- 【1-1】載入 .env（只在本機測試時有用；Render 上直接用環境變數）----
 try:
     from dotenv import load_dotenv
 
@@ -61,6 +97,8 @@ try:
 except ImportError:
     pass
 
+# ---- 【1-2】讀環境變數：MQTT 連線資訊、LINE 權杖、Supabase 資料庫 ----
+# 這些值設在 Render 後台 (Environment)，不寫死在程式裡，避免密碼外流。
 MQTT_HOST = os.environ["MQTT_HOST"]
 MQTT_PORT = int(os.environ.get("MQTT_PORT", "8883"))
 MQTT_USER = os.environ["MQTT_USER"]
@@ -72,6 +110,7 @@ LINE_BROADCAST_URL = "https://api.line.me/v2/bot/message/broadcast"
 
 sb = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_KEY"])
 
+# ---- 【1-3】指標名稱與單位：KNOWN_METRICS 有專屬欄位；LABEL/UNIT 用在 LINE 訊息 ----
 # Metrics that have a dedicated column. Anything else in metrics{}/net{}
 # lands in the `extra` jsonb so the firmware can add fields without a
 # schema change.
@@ -92,10 +131,16 @@ METRIC_UNIT = {
 }
 
 
+# ============================================================================
+# 二、共用小工具：時間處理
+# ============================================================================
+
+# ---- 【2-1】取得現在時間（UTC，字串格式），寫入資料庫時間欄位用 ----
 def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+# ---- 【2-2】把資料庫的 UTC 時間轉成台北時間（+8），給人看的 LINE 訊息用 ----
 def _fmt_taipei(ts) -> str:
     """DB timestamps are UTC; render Asia/Taipei (+8, no DST) for a human."""
     try:
@@ -105,6 +150,11 @@ def _fmt_taipei(ts) -> str:
         return str(ts)
 
 
+# ============================================================================
+# 三、LINE 推播：數值異常時通知手機（流程：3-1 先問能不能推 → 3-3 組訊息 → 3-2 送出）
+# ============================================================================
+
+# ---- 【3-1】判斷「現在要不要暫停推播」：先看該裝置的個別設定，沒設才看全域開關 ----
 def line_push_paused(device_id: str) -> bool:
     """Per-device override (aqua_devices.line_push_paused) if set, else the
     global kill switch flipped from the dashboard (aqua_settings). NULL on
@@ -138,6 +188,7 @@ def line_push_paused(device_id: str) -> bool:
         return False
 
 
+# ---- 【3-2】送出一則 LINE 訊息（沒設權杖或被暫停就直接略過，失敗也不影響收資料）----
 def push_line(text: str, device_id: str) -> None:
     """Broadcast a LINE message to every friend of the Official Account.
     No-op (silently) if LINE_CHANNEL_TOKEN isn't set or pushes are paused
@@ -165,6 +216,8 @@ def push_line(text: str, device_id: str) -> None:
         print(f"[line] push error: {exc}", flush=True)
 
 
+# ---- 【3-3】找出「還沒通知過」的警戒紀錄，組成中文訊息後交給 3-2 送出 ----
+# 警戒紀錄本身是資料庫排程(pg_cron)每分鐘自動寫入的，這裡只負責「通知」。
 def notify_pending_threshold_alerts(device_id: str) -> None:
     """aqua_check_thresholds() (pg_cron, runs every minute) already writes
     one aqua_anomalies row per device/metric/hour when a value is out of its
@@ -213,23 +266,30 @@ def notify_pending_threshold_alerts(device_id: str) -> None:
         )
 
 
+# ============================================================================
+# 四、處理一筆 MQTT 封包：本程式最核心的函式（每收到一筆感測資料就跑一次）
+#     流程：4-1 解析 → 4-2 整理欄位 → 4-3 寫入資料庫 → 4-4 檢查警戒推 LINE
+# ============================================================================
 def handle_payload(topic: str, raw: bytes) -> None:
     """一筆 MQTT 封包進來後的完整處理流程：
-    1) 解析 JSON  2) 整理成資料庫欄位  3) 寫入裝置狀態 + 遙測資料
-    4) 檢查有沒有尚未推播的異常警戒，推 LINE 通知。"""
-    # ---- 1. 解析 JSON ----
+    【4-1】解析 JSON  【4-2】整理成資料庫欄位  【4-3】寫入裝置狀態 + 遙測資料
+    【4-4】檢查有沒有尚未推播的異常警戒，推 LINE 通知。"""
+    # ---- 【4-1】解析 JSON（ESP32 送來的是文字，先轉成可讀取的資料；格式壞掉就略過這筆）----
     try:
         p = json.loads(raw)
     except json.JSONDecodeError as exc:
         print(f"[skip] bad JSON on {topic}: {exc}", flush=True)
         return
 
-    # ---- 2. 整理成資料庫欄位 ----
+    # ---- 【4-2】整理成資料庫欄位 ----
+    # metrics = 感測數值(溫度/濕度...)；net = 網路狀態(訊號強度 rssi...)
     metrics = p.get("metrics") or {}
     net = p.get("net") or {}
+    # 裝置名稱優先用封包內的，沒有就從 topic「aquaponics/站點/裝置/telemetry」第 3 段取
     parts = topic.split("/")
     device_id = p.get("device_id") or (parts[2] if len(parts) > 2 else "unknown")
 
+    # row = 要存進「遙測歷史表」(aqua_telemetry) 的一筆資料
     row = {
         "device_id": device_id,
         "temperature": metrics.get("temperature"),
@@ -242,6 +302,7 @@ def handle_payload(topic: str, raw: bytes) -> None:
     if p.get("ts"):                       # only when the device clock is NTP-synced
         row["ts"] = p["ts"]
 
+    # extra = 沒有專屬欄位的其他資料，統一收進一個彈性欄位，韌體新增欄位時資料庫不用改
     extra = {k: v for k, v in metrics.items() if k not in KNOWN_METRICS}
     extra.update({k: v for k, v in net.items() if k != "rssi"})
     for k in ("schema", "fw", "uptime_s", "site_id"):
@@ -249,6 +310,7 @@ def handle_payload(topic: str, raw: bytes) -> None:
             extra[k] = p[k]
     row["extra"] = extra
 
+    # device_row = 要更新到「裝置表」(aqua_devices) 的最新狀態：最後上線時間、寵物外觀等
     device_row = {
         "device_id": device_id,
         "site_id": p.get("site_id", "default"),
@@ -262,7 +324,8 @@ def handle_payload(topic: str, raw: bytes) -> None:
     if "pet_cold" in p:
         device_row["pet_cold"] = p["pet_cold"]
 
-    # ---- 3. 寫入資料庫（裝置最新狀態 + 這筆遙測紀錄）----
+    # ---- 【4-3】寫入資料庫（裝置最新狀態 + 這筆遙測紀錄）----
+    # upsert = 已有這台裝置就更新、沒有就新增；insert = 每筆都新增一列歷史紀錄
     try:
         sb.table("aqua_devices").upsert(device_row, on_conflict="device_id").execute()
         sb.table("aqua_telemetry").insert(row).execute()
@@ -271,11 +334,16 @@ def handle_payload(topic: str, raw: bytes) -> None:
         print(f"[error] insert failed for {device_id}: {exc}", flush=True)
         return
 
-    # ---- 4. 檢查是否有尚未推播的異常警戒，推送 LINE 通知 ----
+    # ---- 【4-4】檢查是否有尚未推播的異常警戒，推送 LINE 通知（細節見 3-3）----
     notify_pending_threshold_alerts(device_id)
 
 
-# ---- MQTT callbacks (paho v2 signatures) ------------------------------
+# ============================================================================
+# 五、MQTT 連線事件：paho 套件在「連上 / 斷線 / 收到訊息」時會自動呼叫這三個函式
+#     （函式名稱與參數是套件規定的，不要改）
+# ============================================================================
+
+# ---- 【5-1】連上 MQTT 後：訂閱主題（斷線重連後會再執行一次）----
 def on_connect(client, userdata, flags, reason_code, properties=None):
     if reason_code == 0:
         client.subscribe(MQTT_TOPIC, qos=1)
@@ -284,18 +352,23 @@ def on_connect(client, userdata, flags, reason_code, properties=None):
         print(f"[mqtt] connect refused: rc={reason_code}", flush=True)
 
 
+# ---- 【5-2】斷線時：只印一行紀錄，paho 會自動重連 ----
 def on_disconnect(client, userdata, flags, reason_code, properties=None):
     print(f"[mqtt] disconnected (rc={reason_code}); paho will auto-reconnect", flush=True)
 
 
+# ---- 【5-3】收到一筆訊息：交給第四項的 handle_payload() 處理 ----
 def on_message(client, userdata, msg):
     handle_payload(msg.topic, msg.payload)
 
 
-# ---- AI forecast job (runs inside this always-on worker) --------------
+# ============================================================================
+# 六、AI 預測排程：這支常駐程式順便當「計時器」，定時呼叫 analysis/baseline.py
+# ============================================================================
 FORECAST_INTERVAL_S = 1800  # 30 min — same cadence the old GitHub Actions cron aimed for
 
 
+# ---- 【6-1】跑一次預測（出錯只記錄，不能影響收資料）----
 def run_forecast_cycle() -> None:
     """One pass of analysis/baseline.py's job: forecast + settle due
     predictions for every registered device. Never raises — a bad cycle
@@ -307,6 +380,7 @@ def run_forecast_cycle() -> None:
         print(f"[forecast] cycle failed: {exc}", flush=True)
 
 
+# ---- 【6-2】無限迴圈：跑一次 → 睡 30 分鐘 → 再跑一次 ----
 def run_forecast_loop(*, interval: float = FORECAST_INTERVAL_S, sleep=time.sleep) -> None:
     """Runs run_forecast_cycle() immediately, then every `interval` seconds,
     forever. Meant to run in the main thread while the MQTT network loop
@@ -316,11 +390,17 @@ def run_forecast_loop(*, interval: float = FORECAST_INTERVAL_S, sleep=time.sleep
         sleep(interval)
 
 
+# ============================================================================
+# 七、程式入口 main()：Render 啟動這支程式時，從這裡開始執行
+#     同時有「兩條工作線」：背景線收 MQTT 資料(第五項→第四項)，
+#     主線每 30 分鐘跑 AI 預測(第六項)。
+# ============================================================================
 def main() -> int:
     # 開機流程：建立 MQTT client -> 設定帳密/TLS -> 掛上 callback -> 連線 ->
     # 背景執行緒跑 MQTT 網路迴圈(loop_start)-> 主執行緒跑 AI 預測排程
     # (run_forecast_loop,每30分鐘一次,見上方)，往後每筆 MQTT 訊息都觸發
     # on_message -> handle_payload()。
+    # ---- 【7-1】建立 MQTT client：設定帳密、TLS 加密、掛上第五項的三個事件函式 ----
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="render-ingest")
     client.username_pw_set(MQTT_USER, MQTT_PASS)
     client.tls_set(tls_version=ssl.PROTOCOL_TLS_CLIENT)   # validates HiveMQ's cert
@@ -329,6 +409,7 @@ def main() -> int:
     client.on_message = on_message
     client.reconnect_delay_set(min_delay=1, max_delay=60)
 
+    # ---- 【7-2】連線並啟動兩條工作線：背景線收資料、主線跑預測排程 ----
     print(f"[boot] connecting to {MQTT_HOST}:{MQTT_PORT}", flush=True)
     client.connect(MQTT_HOST, MQTT_PORT, keepalive=45)
     client.loop_start()                   # MQTT network loop in its own thread
