@@ -1,6 +1,7 @@
 import json
 
 import ingest
+import pytest
 
 
 def _payload(**over):
@@ -237,3 +238,37 @@ def test_push_line_swallows_network_errors(monkeypatch):
     monkeypatch.setattr(ingest, "line_push_paused", lambda _device_id: False)
     monkeypatch.setattr(ingest.requests, "post", boom)
     ingest.push_line("hello", "esp32-aqua-01")  # must not raise — ingest keeps running
+
+
+# ---- AI forecast job (runs inside this worker) -------------------------
+def test_run_forecast_cycle_calls_baseline_main(monkeypatch):
+    calls = []
+    monkeypatch.setattr(ingest.baseline, "main", lambda: calls.append(1))
+    ingest.run_forecast_cycle()
+    assert calls == [1]
+
+
+def test_run_forecast_cycle_swallows_errors(monkeypatch):
+    """A bad cycle (e.g. a dropped Supabase connection) must never kill
+    the MQTT ingest loop running alongside it in the same process."""
+
+    def boom():
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(ingest.baseline, "main", boom)
+    ingest.run_forecast_cycle()  # must not raise
+
+
+def test_run_forecast_loop_cycles_then_sleeps_for_the_interval(monkeypatch):
+    calls = []
+    monkeypatch.setattr(ingest, "run_forecast_cycle", lambda: calls.append("cycle"))
+
+    def fake_sleep(seconds):
+        calls.append(("sleep", seconds))
+        if len(calls) >= 4:
+            raise KeyboardInterrupt  # break out of the otherwise-infinite loop
+
+    with pytest.raises(KeyboardInterrupt):
+        ingest.run_forecast_loop(interval=99, sleep=fake_sleep)
+
+    assert calls == ["cycle", ("sleep", 99), "cycle", ("sleep", 99)]

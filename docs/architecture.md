@@ -4,16 +4,23 @@
 
 ```
   ESP32 (WROOM-32)                HiveMQ Cloud            Render (paid)          Supabase (Postgres)
-  ┌───────────────┐   MQTT/TLS    ┌────────────┐  sub    ┌─────────────┐  REST  ┌──────────────────┐
-  │ DHT  OLED  RGB │ ───────────▶ │  broker    │ ──────▶ │ ingest.py   │ ─────▶ │ aqua_telemetry   │
-  │ millis() FSM   │  8883 QoS0   │ pub/sub    │  QoS1   │ (worker)    │        │ aqua_devices     │
-  └───────────────┘              └────────────┘         └─────────────┘        │ aqua_*_hourly    │
-        ▲  publishes JSON every 60 s (Phase 1)                                  │ aqua_forecasts   │
-        │                                                    ┌─────────────┐    │ aqua_anomalies   │
-        └────────────────────────────────────────────────────│ baseline.py │◀───┤ (read history)   │
-                              writes forecasts / anomalies    │ (cron)      │───▶│ (write results)  │
-                                                              └─────────────┘    └──────────────────┘
+  ┌───────────────┐   MQTT/TLS    ┌────────────┐  sub    ┌─────────────────┐  REST  ┌──────────────────┐
+  │ DHT  OLED  RGB │ ───────────▶ │  broker    │ ──────▶ │ ingest.py       │ ─────▶ │ aqua_telemetry   │
+  │ millis() FSM   │  8883 QoS0   │ pub/sub    │  QoS1   │ (worker)        │        │ aqua_devices     │
+  └───────────────┘              └────────────┘         │                 │        │ aqua_*_hourly    │
+        ▲  publishes JSON every 60 s (Phase 1)           │ + baseline.py   │ ─────▶ │ aqua_forecasts   │
+        │                                                │   on its own    │ ◀───── │ aqua_anomalies   │
+        │                                                │   30-min timer  │ (read history, write results)
+        └──────────────────────────────────────────────▶ └─────────────────┘        └──────────────────┘
 ```
+
+`baseline.py` (the AI forecast job) is imported directly into `ingest.py` and
+driven by an internal timer in the same always-on worker process — not a
+separate scheduled job. It used to run as a GitHub Actions `schedule`
+trigger, but that's best-effort and was silently dropping most ticks (see
+§9 decisions log, 2026-11-05); this worker is already paid-for and already
+running continuously for MQTT, so folding the forecast job into it costs
+nothing extra and isn't at an external scheduler's mercy.
 
 The edge device never touches the database. Everything is event-driven through
 MQTT, so any number of consumers (ingest, a live dashboard, an alerting rule)
@@ -131,9 +138,15 @@ Retention (`pg_cron`): rollup every 15 min, delete raw rows older than
    `[ok] esp32-aqua-01 T=… H=…` once the device publishes.
 
 ### 5.4 AI job
-Local: `analysis/` → `cp .env.example .env`, edit, `python baseline.py`.
-Cloud: add a Render **Cron Job** (or GitHub Action) running `python baseline.py`
-every 15 min once there is a day or two of data.
+Nothing extra to deploy — `worker/ingest.py` imports `analysis/baseline.py`
+directly and runs it on its own internal 30-min timer, as part of the same
+worker set up in §5.3. It starts forecasting once there's ~1 day of data.
+
+Local testing only: `cd analysis` → `cp .env.example .env`, edit,
+`python baseline.py` to run one pass by hand against the real database
+without waiting for the worker's timer. `.github/workflows/forecast.yml`
+offers the same thing via its `workflow_dispatch` button, no local setup
+needed.
 
 ## 6. Free-tier watch-outs
 
@@ -1271,3 +1284,27 @@ exact version in code would have gone stale before merge.
   "how much history to show" knob, not a performance one (could be widened
   back past 3 days without reintroducing the old timeout risk). 4 new
   tests, 109/109 total, ruff clean.
+* **2026-11-05** — **Moved the AI forecast job off GitHub Actions'
+  `schedule` trigger, into the Render ingest worker's own internal timer.**
+  Checked the real run history (`gh api .../actions/workflows/forecast.yml/runs`)
+  across two weeks: runs meant to fire every 30 min (`cron: "7,37 * * * *"`,
+  itself an earlier fix for the same symptom) were actually landing
+  anywhere from 3 to 8 hours apart. GitHub's `schedule` trigger is
+  documented as best-effort and silently drops ticks under load — the
+  earlier offset-off-:00/:30 fix only reduced collisions with other repos'
+  crons, it never addressed the platform dropping ticks outright.
+  `worker/ingest.py` (`aquaponics-ingest`, already a paid, always-on Render
+  service for MQTT) now `import baseline`s directly and runs
+  `run_forecast_loop()` — `run_forecast_cycle()` (→ `baseline.main()`)
+  immediately, then every `FORECAST_INTERVAL_S` (1800s) — in the main
+  thread, while `client.loop_start()` moves the MQTT network loop to its
+  own background thread instead of blocking on `loop_forever()`. No new
+  Render service, no new cost: this worker was already running
+  continuously, so its own timer can't have ticks silently dropped by an
+  external scheduler. `.github/workflows/forecast.yml` dropped its
+  `schedule:` trigger, kept only `workflow_dispatch` for ad-hoc manual
+  testing against the real database. `worker/requirements.txt` gained
+  `pandas`/`numpy`/`scikit-learn` (baseline.py's deps). 3 new tests
+  (`run_forecast_cycle`/`run_forecast_loop`, with an injectable `sleep` —
+  same pattern as `GeminiLLMClient`'s retry backoff — to test the
+  otherwise-infinite loop deterministically), 112/112 total, ruff clean.

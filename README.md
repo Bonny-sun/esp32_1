@@ -36,9 +36,8 @@ flowchart LR
         MQ[("HiveMQ Cloud<br/>MQTT over TLS")]
     end
     subgraph Cloud["Platform (平台層)"]
-        W["Render worker<br/>ingest.py"]
+        W["Render worker<br/>ingest.py +<br/>baseline.py every 30 min"]
         DB[("Supabase Postgres<br/>+ pg_cron")]
-        AI["GitHub Actions<br/>baseline.py every 30 min"]
     end
     subgraph App["Application (應用層)"]
         D["NiceGUI dashboard<br/>(Render web)"]
@@ -50,7 +49,7 @@ flowchart LR
     MQ -- "aquaponics/+/+/telemetry" --> W
     W -- "REST insert / upsert" --> DB
     DB -- "pg_cron: thresholds, rollup, prune" --> DB
-    AI -- "read history<br/>write forecasts + anomalies" --> DB
+    W -- "read history<br/>write forecasts + anomalies" --> DB
     W -- "claim un-notified<br/>threshold alerts" --> DB
     W --> L
     D -- "read" --> DB
@@ -181,8 +180,13 @@ Full pipeline deployed and running 24/7 across two boards.
   `/admin` — editable alert thresholds and other settings.
 - **Supabase `pg_cron`:** hourly rollup, 30-day raw retention, per-minute
   threshold alerting.
-- **AI:** `.github/workflows/forecast.yml` runs `analysis/baseline.py` every
-  30 min for every device → `aqua_forecasts` / `aqua_anomalies`.
+- **AI:** `analysis/baseline.py` runs every 30 min for every device →
+  `aqua_forecasts` / `aqua_anomalies`. Lives inside the Render ingest
+  worker's own internal timer (`worker/ingest.py`), not a separate
+  GitHub Actions schedule — that trigger turned out to be best-effort and
+  was silently dropping most ticks; piggybacking on the worker that's
+  already running continuously for MQTT costs nothing extra and isn't at
+  an external scheduler's mercy.
 
 ## Stack
 
@@ -196,7 +200,7 @@ Full pipeline deployed and running 24/7 across two boards.
 | Dashboard | NiceGUI + ECharts on Render |
 | AI 問答 | Google Gemini (`google-genai`), manual Tool Calling against read-only query functions |
 | Alerts | LINE Messaging API |
-| Scheduling | GitHub Actions (forecast job) |
+| Scheduling | internal timer inside the Render ingest worker (no external cron) |
 
 See [`docs/architecture.md`](docs/architecture.md) for the full design, wiring
 tables, JSON schema, decisions log and deployment runbook.
@@ -217,12 +221,16 @@ platformio.ini             PlatformIO project + pinned libs
 include/secrets.h.example  copy -> include/secrets.h (gitignored)
 src/main.cpp               firmware: sensor + pet animation + Wi-Fi/MQTT FSM
 sql/                       Supabase DDL + migrations (run in order in the SQL editor)
-worker/ingest.py           Render background worker: MQTT -> Supabase + LINE push
+worker/ingest.py           Render background worker: MQTT -> Supabase + LINE push,
+                           also runs analysis/baseline.py on its own 30-min timer
 dashboard/app.py           NiceGUI dashboard (Render web service)
 dashboard/ask/             AI 問答: LLM Tool Calling agent + read-only query tools
 analysis/baseline.py       pull history -> forecast + anomalies -> write back
+                           (imported directly by worker/ingest.py in production;
+                           still runnable standalone for local testing)
 render.yaml                Render Blueprint (worker + dashboard)
-.github/workflows/         scheduled forecast job
+.github/workflows/         CI (lint+test+firmware build) + a manual-only
+                           forecast.yml for testing baseline.py by hand
 tests/                     pytest suite (worker, analysis, ask; Supabase/LLM faked)
 requirements-dev.txt       deps for lint + tests
 tools/png_to_xbm.py        convert a 48x48 1-bit PNG to a C XBM array (optional)
@@ -247,9 +255,11 @@ Supabase SQL editor → run `sql/schema.sql`, then `02`…`07` in order. Enable
 
 ### 3. Ingest worker + dashboard
 Push to GitHub → Render **New + → Blueprint** → set the `sync: false` env
-vars (MQTT + Supabase secrets, optional `LINE_CHANNEL_TOKEN`) → deploy.
+vars (MQTT + Supabase secrets, optional `LINE_CHANNEL_TOKEN`) → deploy. The
+worker also starts forecasting on its own 30-min timer once there's ~1 day
+of data — no separate AI job to deploy.
 
-### 4. AI baseline
+### 4. AI baseline (optional, local testing only)
 ```bash
 cd analysis
 cp .env.example .env         # SUPABASE_URL + service_role key
