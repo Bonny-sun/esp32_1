@@ -208,12 +208,12 @@ ui.add_head_html(f"<style>{THEME_CSS}</style>", shared=True)
 RANGE_HOURS = {"24 小時": 24, "7 天": 168, "30 天": 720}
 # ~3 days of forecast rows (2 models x 2 metrics x 48 runs/day) — enough
 # history for the 「上次預測 vs 實際」date picker to have real choices.
-# Was 7 days; load_forecast_eval() below pages through every telemetry row
-# in this whole span to match against it (roughly 1/min from the device),
-# so widening this window directly multiplies how many sequential Supabase
-# round trips that pagination loop needs. After weeks of continuous
-# telemetry, 7 days' worth was enough round trips on its own to push
-# /forecast's page build past even a 10s response_timeout and 500 the page.
+# Used to also bound how many raw telemetry rows load_forecast_eval() had
+# to page through to match against (it doesn't anymore — see that
+# function's docstring: the match is now pre-computed in baseline.py), so
+# this is purely a "how much history to show" knob now, not a performance
+# one. Could be widened again without the old timeout risk if the date
+# picker ever needs more than 3 days of choices.
 FORECAST_EVAL_LOOKBACK_ROWS = 2 * 2 * 48 * 3
 METRIC_FILTERS = {  # 「近期異常」「上次預測 vs 實際」的項目篩選
     "溫度": ["temperature"],
@@ -386,84 +386,45 @@ def load_forecasts(device_id: str) -> pd.DataFrame:
 
 @cached(300)
 def load_forecast_eval(device_id: str, limit: int = FORECAST_EVAL_LOOKBACK_ROWS) -> pd.DataFrame:
-    """Match each already-due forecast to the actual reading nearest its
-    target time (within 15 min). Returns a small table for the UI.
+    """Read the already-settled 「預測 vs 實際」 rows straight off
+    aqua_forecasts. Just a plain select — no telemetry pagination, no
+    nearest-timestamp matching here anymore.
 
-    limit defaults to ~7 days of rows: each run writes 2 models x 2 metrics
-    = 4 rows every 30 min (192/day), and the dashboard's date picker needs
-    more than a single day of history to pick from.
+    That work (matching a due forecast against the actual reading nearest
+    its target time, within 15 min) now happens once, in the background,
+    in analysis/baseline.py's settle_due_forecasts() — it already runs on
+    a schedule and already has the telemetry loaded for forecasting, so it
+    fills in aqua_forecasts.actual/err/hit there instead of this page
+    redoing the same match-and-compare against days of raw telemetry on
+    every view (that used to be this file's slowest call, and the reason
+    FORECAST_EVAL_LOOKBACK_ROWS got shrunk from 7 days to 3 — see that
+    constant's own comment).
 
-    ttl=300, not the usual @cached(30)/@cached(60): this is the slowest
-    call in the file (pages through aqua_telemetry to match forecasts),
-    and baseline.py only writes new forecasts every 30 min — a hit here
-    can be up to 5 min stale and still show data from the latest run.
-    Keep this in sync with /forecast's own auto-refresh interval below."""
-    now_iso = datetime.now(timezone.utc).isoformat()
-    fc = (
+    ttl=300: baseline.py only settles/creates new forecasts every 30 min,
+    so a hit here can be up to 5 min stale and still reflect the latest
+    run. Keep this in sync with /forecast's own auto-refresh interval
+    below."""
+    rows = (
         sb().table("aqua_forecasts").select("*").eq("device_id", device_id)
-        .lt("ts_target", now_iso).order("ts_target", desc=True).limit(limit).execute().data
+        .not_.is_("hit", "null").order("ts_target", desc=True).limit(limit).execute().data
     )
-    if not fc:
+    if not rows:
         return pd.DataFrame()
-    f = pd.DataFrame(fc)
-    f["ts_target"] = pd.to_datetime(f["ts_target"], utc=True, format="ISO8601")
-    lo = (f["ts_target"].min() - pd.Timedelta(minutes=15)).isoformat()
-    hi = (f["ts_target"].max() + pd.Timedelta(minutes=15)).isoformat()
-    # Telemetry lands roughly once a minute, so a wide [lo, hi] window (the
-    # date picker's range grows for as long as ewma+drift has been running —
-    # weeks, not days) can hold more rows than any single guessed limit
-    # safely covers. A flat 1000, then a "span_minutes + margin" estimate,
-    # both silently truncated to the newest slice of the window once the
-    # real row count crept past the guess, starving older dates of any
-    # match even though the telemetry existed. Page through NEWEST-first
-    # instead — the same fix, and the same PostgREST page-size limit, as
-    # baseline.py's load_history() — so this can never undershoot.
-    tel_rows: list = []
-    for page in range(60):  # 60 * 1000 = 60k row ceiling
-        chunk = (
-            sb().table("aqua_telemetry")
-            .select("ts,temperature,humidity,water_temp,ph,soil_moisture")
-            .eq("device_id", device_id).gte("ts", lo).lte("ts", hi)
-            .order("ts", desc=True)
-            .range(page * 1000, page * 1000 + 999)
-            .execute().data
-        )
-        tel_rows.extend(chunk)
-        if len(chunk) < 1000:
-            break
-    t = pd.DataFrame(tel_rows)
-    if t.empty:
-        return pd.DataFrame()
-    t["ts"] = pd.to_datetime(t["ts"], utc=True, format="ISO8601")
-    t = t.set_index("ts").sort_index()
-    out = []
-    for _, r in f.iterrows():
-        metric = r["metric"]
-        if metric not in t.columns:
-            continue
-        s = t[metric].dropna()
-        if s.empty:
-            continue
-        pos = s.index.get_indexer([r["ts_target"]], method="nearest")[0]
-        if abs((s.index[pos] - r["ts_target"]).total_seconds()) > 900:
-            continue
-        actual = float(s.iloc[pos])
-        yhat = float(r["yhat"])
-        lo_v, hi_v = r.get("yhat_lower"), r.get("yhat_upper")
-        hit = pd.notna(lo_v) and pd.notna(hi_v) and float(lo_v) <= actual <= float(hi_v)
-        ts_local = r["ts_target"].tz_convert(TZ)
-        out.append(
-            {
-                "ts_target": ts_local.strftime("%m-%d %H:%M"),
-                "_date": ts_local.strftime("%Y-%m-%d"),
-                "metric": LABEL.get(metric, metric),
-                "model": r["model"],
-                "yhat": round(yhat, 1),
-                "actual": round(actual, 1),
-                "err": round(abs(yhat - actual), 2),
-                "hit": "✓" if hit else "✗",
-            }
-        )
+    f = pd.DataFrame(rows)
+    f["ts_target"] = pd.to_datetime(f["ts_target"], utc=True, format="ISO8601").dt.tz_convert(TZ)
+    out = [
+        {
+            "ts_target": r["ts_target"].strftime("%m-%d %H:%M"),
+            "_date": r["ts_target"].strftime("%Y-%m-%d"),
+            "metric": LABEL.get(r["metric"], r["metric"]),
+            "model": r["model"],
+            "yhat": round(float(r["yhat"]), 1),
+            "actual": round(float(r["actual"]), 1),
+            "err": round(float(r["err"]), 2),
+            "hit": "✓" if r["hit"] else "✗",
+        }
+        for _, r in f.iterrows()
+    ]
     return pd.DataFrame(out)
 
 
