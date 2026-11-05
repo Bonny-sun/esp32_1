@@ -6,3 +6,8 @@ requests>=2.31
 # reuse a cached pre-2026-10-19 CA bundle — that release is the one dropping
 # trust in eMudhra's compromised intermediates (disclosed 2026-10-19).
 certifi>=2026.10.19
+# For analysis/baseline.py, imported directly by ingest.py (the AI forecast
+# job now runs inside this worker — see ingest.py's module docstring).
+pandas>=2.2
+numpy>=1.26
+scikit-learn>=1.4

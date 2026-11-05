@@ -27,6 +27,15 @@ Env vars (Render dashboard -> Environment):
                          Messaging API "broadcast" call, which pushes to every
                          friend of your LINE Official Account — fine for a
                          personal setup, see docs/architecture.md.)
+
+Also runs the AI forecast job (analysis/baseline.py) on its own internal
+30-min timer, in this same always-on process — see run_forecast_loop()
+below. This used to be a separate GitHub Actions scheduled workflow;
+GitHub's `schedule` trigger is best-effort and was silently dropping most
+ticks (runs meant to be 30 min apart were landing 3-8h apart in practice).
+This worker is already paid-for and already running continuously for MQTT,
+so piggybacking the forecast job on it costs nothing extra and isn't at the
+mercy of an external scheduler.
 """
 from __future__ import annotations
 
@@ -34,11 +43,16 @@ import json
 import os
 import ssl
 import sys
+import time
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import paho.mqtt.client as mqtt
 import requests
 from supabase import create_client
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "analysis"))
+import baseline  # noqa: E402
 
 try:
     from dotenv import load_dotenv
@@ -278,9 +292,35 @@ def on_message(client, userdata, msg):
     handle_payload(msg.topic, msg.payload)
 
 
+# ---- AI forecast job (runs inside this always-on worker) --------------
+FORECAST_INTERVAL_S = 1800  # 30 min — same cadence the old GitHub Actions cron aimed for
+
+
+def run_forecast_cycle() -> None:
+    """One pass of analysis/baseline.py's job: forecast + settle due
+    predictions for every registered device. Never raises — a bad cycle
+    (e.g. a dropped Supabase connection) is logged and skipped, not
+    allowed to take down the MQTT ingest loop running alongside it."""
+    try:
+        baseline.main()
+    except Exception as exc:              # noqa: BLE001 - must never kill the worker
+        print(f"[forecast] cycle failed: {exc}", flush=True)
+
+
+def run_forecast_loop(*, interval: float = FORECAST_INTERVAL_S, sleep=time.sleep) -> None:
+    """Runs run_forecast_cycle() immediately, then every `interval` seconds,
+    forever. Meant to run in the main thread while the MQTT network loop
+    runs in its own background thread (client.loop_start() in main())."""
+    while True:
+        run_forecast_cycle()
+        sleep(interval)
+
+
 def main() -> int:
     # 開機流程：建立 MQTT client -> 設定帳密/TLS -> 掛上 callback -> 連線 ->
-    # 進入 loop_forever()，往後每筆訊息都觸發 on_message -> handle_payload()。
+    # 背景執行緒跑 MQTT 網路迴圈(loop_start)-> 主執行緒跑 AI 預測排程
+    # (run_forecast_loop,每30分鐘一次,見上方)，往後每筆 MQTT 訊息都觸發
+    # on_message -> handle_payload()。
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="render-ingest")
     client.username_pw_set(MQTT_USER, MQTT_PASS)
     client.tls_set(tls_version=ssl.PROTOCOL_TLS_CLIENT)   # validates HiveMQ's cert
@@ -291,7 +331,9 @@ def main() -> int:
 
     print(f"[boot] connecting to {MQTT_HOST}:{MQTT_PORT}", flush=True)
     client.connect(MQTT_HOST, MQTT_PORT, keepalive=45)
-    client.loop_forever(retry_first_connection=True)
+    client.loop_start()                   # MQTT network loop in its own thread
+    print(f"[boot] forecast cycle every {FORECAST_INTERVAL_S}s, starting now", flush=True)
+    run_forecast_loop()                   # blocks the main thread forever
     return 0
 
 

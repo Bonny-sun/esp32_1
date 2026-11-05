@@ -1,24 +1,20 @@
 name: forecast
 
-# Runs analysis/baseline.py on a schedule so aqua_forecasts / aqua_anomalies
-# stay fresh and the dashboard "AI 預測" section keeps updating.
-#
-# Setup once: repo → Settings → Secrets and variables → Actions → New secret
-#   SUPABASE_URL          https://<ref>.supabase.co
-#   SUPABASE_SERVICE_KEY  the sb_secret_... key
-#
-# Private repos: Actions minutes are limited (2000/mo free). ~48 runs/day at
-# ~1 min each ≈ 1440/mo — fine. Make the repo public for unlimited minutes,
-# or widen the cron if you add heavier models later.
+# Manual-only now. analysis/baseline.py used to run here on a `schedule`
+# trigger every 30 min, offset off :00/:30 to dodge GitHub's shared-runner
+# load spikes — but that only ever reduced, not fixed, the problem:
+# GitHub's `schedule` trigger is best-effort and was actually silently
+# dropping most ticks regardless of offset (checked the real run history:
+# runs meant to land 30 min apart were landing anywhere from 3 to 8 hours
+# apart). The job now runs inside worker/ingest.py's own 30-min internal
+# timer instead — see that file's module docstring — since that worker is
+# already paid-for and already running continuously for MQTT, so it isn't
+# at the mercy of an external scheduler. This workflow is kept only for
+# `workflow_dispatch` — a manual "Run workflow" button, handy for testing
+# baseline.py against the real database without waiting for the worker's
+# own timer.
 
 on:
-  schedule:
-    # Offset from :00/:30 on purpose: GitHub's scheduler is "best effort"
-    # and silently drops ticks under load, and load peaks right at the top
-    # of every hour/half-hour — landing a sub-hourly cron exactly there is
-    # close to a worst case. Observed effect before this change: runs that
-    # should fire every 30 min were actually landing 4-7 hours apart.
-    - cron: "7,37 * * * *"
   workflow_dispatch: {}          # manual "Run workflow" button
 
 concurrency:
