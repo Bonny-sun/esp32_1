@@ -1,4 +1,40 @@
-"""The /ask page's LLM-agnostic agent loop, a Gemini implementation of it,
+"""
+╔═══════════════════════════════════ 檔案導覽 ═══════════════════════════════════╗
+
+類別：AI 分析（AI 問答）── 儀表板 /ask 頁面背後的「AI 助理」邏輯，用 Python 寫成，呼叫 Google Gemini。
+目的：使用者在 /ask 頁面用中文問問題（例如「昨天溫度最高是多少」），這支程式負責 4 件事：
+      1. 把問題交給 Gemini，而且只讓它呼叫固定的幾個「查資料工具」(tools.py)，不准自己編數字
+      2. 照 Gemini 的要求執行工具、把結果餵回去，來回最多 4 輪，直到得到文字答案
+      3. 網路逾時或 Gemini 暫時出錯時，自動重試
+      4. 限制每分鐘、每人每天、全站每天的提問次數，避免被濫用、花太多錢
+資料流向：使用者在 /ask 提問 ──> dashboard/app.py ──> 【本程式】 ⇄ Google Gemini
+                                                          │ （Gemini 說「我要查某資料」）
+                                                          └──> tools.py 查 Supabase ──> 結果交還 Gemini ──> 中文答案
+
+程式架構：
+  一、設定與常數        【1-1】輪數與問題長度上限  【1-2】Gemini 模型、逾時與重試設定  【1-3】系統提示詞（AI 的規則）
+  二、資料格式          【2-1】ToolCall 工具呼叫  【2-2】ModelTurn 模型的一次回應  【2-3】LLMClient 介面
+  三、問答主流程        【3-1】執行工具（出錯也不當機）  【3-2】問答迴圈 answer_question
+  四、Gemini 實作       【4-1】建立連線與工具清單  【4-2】問一次  【4-3】失敗自動重試  【4-4】轉成 Gemini 格式
+  五、提問次數限制      【5-1】次數上限設定  【5-2】建立限流器  【5-3】檢查能不能問  【5-4】記錄一次提問
+
+備註：
+  改 AI 的角色與回答規則 ....... 【1-3】SYSTEM_PROMPT
+  改用哪個 Gemini 模型 ......... 【1-2】的 DEFAULT_MODEL
+  改最多問幾輪、問題最長幾字 ... 【1-1】
+  改逾時秒數、重試次數 ......... 【1-2】
+  改提問次數上限 ............... 【5-1】（也可用環境變數 ASK_RATE_PER_MINUTE、ASK_RATE_PER_DAY、ASK_RATE_SITE_PER_DAY）
+  新增一個 AI 能查的工具 ....... 在 tools.py 新增，這支程式不用改
+  名詞：LLM = 大型語言模型（如 Gemini）
+        工具呼叫(tool calling) = AI 自己判斷「我需要查哪筆資料」，由程式代它去查，再把結果交還給它
+        Protocol = 一份「長什麼樣子才算 LLMClient」的規格，測試時可以換成假的 AI
+        重試(retry) = 暫時性失敗時，等一下再試一次
+
+╚════════════════════════════════════════════════════════════════════════════╝
+
+以下為技術備註（原文保留）：
+
+The /ask page's LLM-agnostic agent loop, a Gemini implementation of it,
 and an in-memory abuse/cost guard.
 
 `LLMClient` is the seam: app.py builds a real `GeminiLLMClient`, tests build
@@ -33,8 +69,14 @@ from ask.tools import TOOL_SCHEMAS, AskTools
 
 logger = logging.getLogger(__name__)
 
+# ============================================================================
+# 一、設定與常數：AI 問答的各種上限與規則，要調整先來這裡
+# ============================================================================
+
+# ---- 【1-1】輪數與問題長度上限：AI 最多來回查 4 輪、使用者問題最多取前 300 字 ----
 MAX_TOOL_ROUNDS = 4
 MAX_QUESTION_CHARS = 300
+# ---- 【1-2】Gemini 模型、單次逾時（60 秒）、失敗重試（最多再試 2 次，間隔 1 秒）----
 DEFAULT_MODEL = "gemini-flash-latest"  # a Google-maintained alias for the
 # current recommended Flash model, not a dated version — the model landscape
 # moves fast enough that pinning an exact name here would go stale; GEMINI_MODEL
@@ -59,6 +101,9 @@ DEFAULT_TIMEOUT_MS = 60_000
 MAX_GENERATE_RETRIES = 2
 RETRY_BACKOFF_SECONDS = 1.0
 
+# ---- 【1-3】系統提示詞：每次都先告訴 AI 的規則 ----
+# 只能用工具查資料、不能編數字；查無資料就說「查無資料」；只回答跟系統相關的問題；
+# 一律用繁體中文、簡短，最後附上「資料來源」讓使用者自己驗證
 SYSTEM_PROMPT = (
     "你是一個 AIoT 溫溼度監測系統的資料助理。你只能透過提供的工具查詢資料,"
     "絕對不能自己編造數值或引用工具結果以外的資訊。如果工具回傳查無資料,"
@@ -70,12 +115,18 @@ SYSTEM_PROMPT = (
 )
 
 
+# ============================================================================
+# 二、資料格式：程式內部用來傳遞資料的「盒子」
+# ============================================================================
+
+# ---- 【2-1】工具呼叫：AI 說「我要用哪個工具(name)，帶哪些參數(args)」----
 @dataclass
 class ToolCall:
     name: str
     args: dict[str, Any]
 
 
+# ---- 【2-2】模型的一次回應：二選一——「還要查資料(tool_calls)」或「已有最終答案(text)」----
 @dataclass
 class ModelTurn:
     """One LLM response: either tool calls to make next, or a final answer.
@@ -92,10 +143,16 @@ class ModelTurn:
     raw: Any = None
 
 
+# ---- 【2-3】LLMClient 介面：規定「能回答問題的 AI」要有 generate()。真的用 Gemini，測試用假的 ----
 class LLMClient(Protocol):
     def generate(self, messages: list[dict]) -> ModelTurn: ...
 
 
+# ============================================================================
+# 三、問答主流程：本程式最核心的部分（3-2 會反覆呼叫 3-1）
+# ============================================================================
+
+# ---- 【3-1】執行 AI 指定的工具：工具名稱不存在或執行出錯，都只回傳 {"error": ...}，不會讓整個請求當掉 ----
 def _execute_tool(tools: AskTools, name: str, args: dict) -> dict:
     """Never raises — any failure (bad tool name, the underlying loader
     blowing up) comes back as {"error": ...} so the agent loop can hand it
@@ -111,18 +168,19 @@ def _execute_tool(tools: AskTools, name: str, args: dict) -> dict:
         return {"error": f"tool {name} failed: {exc}"}
 
 
+# ---- 【3-2】問答迴圈：每一輪 ①問 AI → ②AI 要查資料就執行工具 → ③把結果餵回去再問，直到有答案或輪數用完 ----
 def answer_question(question: str, *, llm: LLMClient, tools: AskTools, max_rounds: int = MAX_TOOL_ROUNDS) -> str:
     """Drives the tool-calling loop to a final text answer, or a fixed
     give-up message if the model never stops asking for tools within
     `max_rounds` — this is the cost/latency backstop the spec calls for, a
     stuck model can cost at most `max_rounds` tool calls plus `max_rounds`
     LLM calls per question, never an unbounded loop."""
-    # 問答流程：每一輪 1)把對話紀錄丟給LLM 2)如果LLM要求查資料就執行對應
-    # 工具、把結果丟回去給它 3)重複，直到LLM給出最終文字答案，或輪數用盡。
+    # 問答流程：每一輪 ①把對話紀錄丟給LLM ②如果LLM要求查資料就執行對應
+    # 工具、③把結果丟回去給它，重複，直到LLM給出最終文字答案，或輪數用盡。
     question = question.strip()[:MAX_QUESTION_CHARS]
     messages: list[dict] = [{"role": "user", "text": question}]
     for _ in range(max_rounds):
-        turn = llm.generate(messages)                      # 1. 問 LLM
+        turn = llm.generate(messages)                      # ① 問 LLM
         if not turn.tool_calls:
             return turn.text or "很抱歉,目前無法產生回答,請換個方式提問。"  # 已是最終答案
         messages.append(
@@ -132,12 +190,16 @@ def answer_question(question: str, *, llm: LLMClient, tools: AskTools, max_round
                 "raw": turn.raw,
             }
         )
-        for tc in turn.tool_calls:                         # 2. 執行它要求的工具
+        for tc in turn.tool_calls:                         # ② 執行它要求的工具（見【3-1】）
             result = _execute_tool(tools, tc.name, tc.args)
-            messages.append({"role": "tool", "name": tc.name, "result": result})  # 3. 結果餵回去，進下一輪
+            messages.append({"role": "tool", "name": tc.name, "result": result})  # ③ 結果餵回去，進下一輪
     return "無法在限定的查詢次數內完成這個問題,請換個方式提問或縮小問題範圍。"
 
 
+# ============================================================================
+# 四、Gemini 實作：真正去呼叫 Google Gemini 的那個「LLMClient」（依 2-3 的規格寫成）
+#     用「手動」工具呼叫：由我們自己控制最多幾輪，而不是交給 SDK 自動跑
+# ============================================================================
 class GeminiLLMClient:
     """Real LLMClient backed by Google's `google-genai` SDK, manual
     (non-automatic) function calling — automatic mode's own built-in loop
@@ -147,6 +209,7 @@ class GeminiLLMClient:
     ask.tools.TOOL_SCHEMAS (plain JSON Schema via parameters_json_schema,
     not hand-built google.genai.types.Schema objects)."""
 
+    # ---- 【4-1】建立連線：用 API 金鑰建立 Gemini 客戶端，並把 tools.py 的工具清單轉成 Gemini 看得懂的格式 ----
     def __init__(
         self,
         api_key: str,
@@ -183,6 +246,8 @@ class GeminiLLMClient:
             http_options=self._types.HttpOptions(timeout=timeout_ms),
         )
 
+    # ---- 【4-2】問 Gemini 一次：把對話紀錄轉成 Gemini 格式送出，回傳「還要查工具」或「最終答案」----
+    # 若 Gemini 要查工具，要把它原本的回應完整保留(raw)，下一輪原封不動送回去，否則它會拒絕
     def generate(self, messages: list[dict]) -> ModelTurn:
         contents = [self._to_content(m) for m in messages]
         response = self._generate_with_retry(contents)
@@ -200,6 +265,8 @@ class GeminiLLMClient:
             return ModelTurn(tool_calls=[ToolCall(name=c.name, args=dict(c.args or {})) for c in calls], raw=raw)
         return ModelTurn(text=(response.text or "").strip() or None)
 
+    # ---- 【4-3】失敗自動重試：逾時或 Gemini 伺服器暫時出錯(5xx)就等 1 秒再試，最多再試 2 次 ----
+    # 請求本身有錯(4xx)不重試，因為重試幾次結果都一樣
     def _generate_with_retry(self, contents):
         """Retry a transient failure (timeout, 5xx) up to MAX_GENERATE_RETRIES
         extra times with a short fixed backoff between attempts; a non-
@@ -219,6 +286,7 @@ class GeminiLLMClient:
                 self._sleep(RETRY_BACKOFF_SECONDS)
         raise AssertionError("unreachable")  # pragma: no cover
 
+    # ---- 【4-4】格式轉換：把程式內部的訊息(user/model/tool 三種角色)轉成 Gemini SDK 要的格式 ----
     def _to_content(self, message: dict):
         types = self._types
         role = message["role"]
@@ -242,6 +310,12 @@ class GeminiLLMClient:
         raise ValueError(f"unknown message role {role!r}")
 
 
+# ============================================================================
+# 五、提問次數限制：避免公開網站被亂問、花太多 Gemini 的費用
+#     記錄存在程式記憶體裡（不寫資料庫），重新部署或重啟後會歸零
+# ============================================================================
+
+# ---- 【5-1】次數上限設定：預設每分鐘 6 次、每人每天 60 次、全站每天 500 次，可用環境變數調整 ----
 # ---------------------------------------------------------------- rate limit
 # Cost/abuse guard for a public demo site: caps how often one visitor (and
 # the site as a whole) can trigger a real LLM call. Deliberately a plain
@@ -258,6 +332,8 @@ class RateLimitConfig:
     site_per_day: int = field(default_factory=lambda: int(os.environ.get("ASK_RATE_SITE_PER_DAY", "500")))
 
 
+# ---- 【5-2】建立限流器：用「每個人的提問時間清單」加「全站提問時間清單」來計算次數 ----
+# _prune 負責清掉超過 24 小時的舊紀錄
 class RateLimiter:
     def __init__(self, config: RateLimitConfig | None = None, *, now: Callable[[], float] = time.time) -> None:
         self._config = config or RateLimitConfig()
@@ -269,6 +345,8 @@ class RateLimiter:
     def _prune(timestamps: list[float], cutoff: float) -> list[float]:
         return [t for t in timestamps if t > cutoff]
 
+    # ---- 【5-3】檢查能不能問：依序看 ①每分鐘上限 ②這個人每天上限 ③全站每天上限 ----
+    # 超過就回傳中文原因，沒問題回傳 None
     def check(self, identity: str) -> str | None:
         """None = allowed; otherwise a ready-to-show 繁體中文 reason."""
         now = self._now()
@@ -281,6 +359,7 @@ class RateLimiter:
             return "今天全站的提問次數已達上限,請明天再來。"
         return None
 
+    # ---- 【5-4】記錄一次提問：把現在時間同時記到「這個人」和「全站」兩份清單裡（通過 5-3 之後才呼叫）----
     def record(self, identity: str) -> None:
         now = self._now()
         pruned = self._prune(self._per_identity.get(identity, []), now - 86400)
