@@ -304,6 +304,67 @@ def dedupe_anomalies(device_id: str, rows: list[dict]) -> list[dict]:
     ]
 
 
+# ---- 4b. settle due forecasts (pre-compute 「預測 vs 實際」) -----------
+# How far back to retry matching an unsettled forecast. Bounded so a
+# forecast that can never be matched (e.g. the device went offline right
+# as its ts_target arrived, and never came back) doesn't get re-queried
+# forever — it just stays unsettled (actual/err/hit NULL) past this age
+# and drops out of the pending set. Matches LOOKBACK_H's own 72h telemetry
+# window below, so `telemetry` always has enough history to cover whatever
+# this query returns.
+SETTLE_MAX_AGE_H = LOOKBACK_H
+
+
+def settle_due_forecasts(device_id: str, telemetry: pd.DataFrame) -> int:
+    """Fill in actual/err/hit for forecasts whose ts_target has already
+    passed but haven't been matched against a real reading yet. Matches
+    against `telemetry` (the same frame process_device() already loaded
+    for forecasting — its 72h window comfortably covers anything due this
+    run, since this runs every ~30 min), so no extra Supabase round trip
+    is needed just to fetch comparison data.
+
+    This is the computation the /forecast dashboard page used to redo on
+    every view (paging through days of raw telemetry to match against);
+    doing it once here, in the background job that already runs on a
+    schedule, means the dashboard can just read the stored result instead.
+    Returns how many forecasts got settled, for the caller's own logging."""
+    if telemetry.empty:
+        return 0
+    now = datetime.now(timezone.utc)
+    pending = (
+        sb.table("aqua_forecasts")
+        .select("id,metric,ts_target,yhat,yhat_lower,yhat_upper")
+        .eq("device_id", device_id)
+        .is_("actual", "null")
+        .lt("ts_target", now.isoformat())
+        .gte("ts_target", (now - timedelta(hours=SETTLE_MAX_AGE_H)).isoformat())
+        .execute().data
+    )
+    settled = 0
+    for row in pending:
+        metric = row["metric"]
+        if metric not in telemetry.columns:
+            continue
+        s = telemetry[metric].dropna()
+        if s.empty:
+            continue
+        target = pd.Timestamp(row["ts_target"])
+        pos = s.index.get_indexer([target], method="nearest")[0]
+        if abs((s.index[pos] - target).total_seconds()) > 900:  # >15min: no real match
+            continue
+        actual = float(s.iloc[pos])
+        yhat_lower, yhat_upper = row.get("yhat_lower"), row.get("yhat_upper")
+        hit = (
+            yhat_lower is not None and yhat_upper is not None
+            and yhat_lower <= actual <= yhat_upper
+        )
+        sb.table("aqua_forecasts").update(
+            {"actual": round(actual, 2), "err": round(abs(actual - row["yhat"]), 2), "hit": hit}
+        ).eq("id", row["id"]).execute()
+        settled += 1
+    return settled
+
+
 def list_device_ids() -> list[str]:
     """DEVICE_ID env var restricts a run to one device (local testing).
     Otherwise every device in aqua_devices is processed, so a 2nd/3rd
@@ -322,6 +383,11 @@ def process_device(device_id: str) -> None:
     if df.empty:
         print(f"[{device_id}] no telemetry yet — collect some data first")
         return
+
+    # ---- 1b. 結算已到期但還沒比對過的舊預測(命中率背景預先算好)----
+    settled = settle_due_forecasts(device_id, df)
+    if settled:
+        print(f"[{device_id}] settled {settled} due forecast(s)")
 
     # ---- 2. 整理成特徵（補值、算移動平均/標準差）----
     feats = build_features(df, FEATURE_COLS)

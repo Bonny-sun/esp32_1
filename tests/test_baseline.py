@@ -210,6 +210,89 @@ def test_dedupe_empty_input_makes_no_query(monkeypatch, fake_client):
     assert client.queries == []
 
 
+# ---- settle_due_forecasts -----------------------------------------------
+def test_settle_due_forecasts_empty_telemetry_makes_no_query(monkeypatch, fake_client):
+    client = fake_client()
+    monkeypatch.setattr(baseline, "sb", client)
+    assert baseline.settle_due_forecasts("dev", pd.DataFrame()) == 0
+    assert client.queries == []
+
+
+def test_settle_due_forecasts_matches_nearest_reading_and_marks_hit(monkeypatch, fake_client):
+    idx = pd.date_range("2026-09-16 00:00", periods=5, freq="5min", tz="UTC")
+    telemetry = pd.DataFrame({"temperature": [20.0, 20.5, 21.0, 21.4, 22.0]}, index=idx)
+    pending = [
+        {
+            "id": 1, "metric": "temperature", "ts_target": idx[2].isoformat(),
+            "yhat": 21.5, "yhat_lower": 20.0, "yhat_upper": 23.0,
+        },
+    ]
+    updates: list = []
+
+    def handler(q):
+        if q.has("update"):
+            updates.append((q.op("update")[0][0], q.op("eq")[0]))
+            return []
+        return pending
+
+    monkeypatch.setattr(baseline, "sb", fake_client(handler))
+
+    assert baseline.settle_due_forecasts("dev", telemetry) == 1
+    payload, eq_args = updates[0]
+    assert eq_args == ("id", 1)
+    assert payload == {"actual": 21.0, "err": 0.5, "hit": True}
+
+
+def test_settle_due_forecasts_marks_miss_when_outside_the_interval(monkeypatch, fake_client):
+    idx = pd.date_range("2026-09-16 00:00", periods=3, freq="5min", tz="UTC")
+    telemetry = pd.DataFrame({"temperature": [20.0, 30.0, 20.0]}, index=idx)
+    pending = [
+        {
+            "id": 2, "metric": "temperature", "ts_target": idx[1].isoformat(),
+            "yhat": 20.0, "yhat_lower": 18.0, "yhat_upper": 22.0,
+        },
+    ]
+    updates: list = []
+
+    def handler(q):
+        if q.has("update"):
+            updates.append(q.op("update")[0][0])
+            return []
+        return pending
+
+    monkeypatch.setattr(baseline, "sb", fake_client(handler))
+
+    assert baseline.settle_due_forecasts("dev", telemetry) == 1
+    assert updates[0] == {"actual": 30.0, "err": 10.0, "hit": False}
+
+
+def test_settle_due_forecasts_skips_a_row_with_no_close_reading(monkeypatch, fake_client):
+    """The nearest telemetry point is still >15min away from ts_target —
+    never a real match, so it's left unsettled (no update call) rather
+    than silently paired with stale/unrelated data."""
+    idx = pd.date_range("2026-09-16 00:00", periods=2, freq="1h", tz="UTC")
+    telemetry = pd.DataFrame({"temperature": [20.0, 21.0]}, index=idx)
+    pending = [
+        {
+            "id": 3, "metric": "temperature",
+            "ts_target": (idx[0] + pd.Timedelta(minutes=30)).isoformat(),
+            "yhat": 20.5, "yhat_lower": 19.0, "yhat_upper": 22.0,
+        },
+    ]
+    updates: list = []
+
+    def handler(q):
+        if q.has("update"):
+            updates.append(q.op("update")[0][0])
+            return []
+        return pending
+
+    monkeypatch.setattr(baseline, "sb", fake_client(handler))
+
+    assert baseline.settle_due_forecasts("dev", telemetry) == 0
+    assert updates == []
+
+
 # ---- device selection --------------------------------------------------
 def test_list_device_ids_reads_registry(monkeypatch, fake_client):
     monkeypatch.setattr(baseline, "DEVICE_ID", "")

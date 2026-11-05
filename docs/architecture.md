@@ -89,7 +89,7 @@ automatically if the device drops without a clean disconnect.
 | `aqua_devices` | registry, `last_seen` heartbeat |
 | `aqua_telemetry` | raw time-series; wide columns + `extra jsonb` |
 | `aqua_telemetry_hourly` | 1-hour rollup (avg/min/max); keeps storage bounded |
-| `aqua_forecasts` | model output (`metric`, `horizon_min`, `yhat`, bounds) |
+| `aqua_forecasts` | model output (`metric`, `horizon_min`, `yhat`, bounds) + settled eval (`actual`/`err`/`hit`, filled in later once due) |
 | `aqua_anomalies` | flagged points (`method` = `rolling_zscore` → `isolation_forest`) |
 | `aqua_latest` (view) | newest row per device |
 
@@ -1249,3 +1249,25 @@ exact version in code would have gone stale before merge.
   was sized to "comfortably cover 168h" — with `hours` now reaching 720h,
   the theoretical worst case (every device/metric/hour triggering) could
   exceed it. 10 new tests, 101/101 total, ruff clean.
+* **2026-11-05** — **Pre-compute 「預測 vs 實際」 instead of matching it on
+  every `/forecast` view.** The dashboard's `load_forecast_eval()` used to
+  page through days of raw `aqua_telemetry` (sequential, PostgREST-capped
+  at ~1000 rows/request) on every page load just to find the actual
+  reading nearest each due forecast's `ts_target` — the reason
+  `FORECAST_EVAL_LOOKBACK_ROWS` had already been shrunk 7→3 days once
+  (2026-10-02). Moved that match-and-compare into
+  `analysis/baseline.py`'s new `settle_due_forecasts()`, which runs every
+  30 min (same schedule the forecast job already has) and reuses the
+  telemetry it already loaded for forecasting — no extra Supabase round
+  trip. It fills in three new nullable `aqua_forecasts` columns
+  (`actual`/`err`/`hit`; `sql/09_forecast_eval_columns.sql`) once a
+  forecast's target time has passed and a real reading is found within 15
+  min (same tolerance as before); a forecast whose target passes without
+  ever getting a close-enough reading just stays unsettled past
+  `SETTLE_MAX_AGE_H` (= `LOOKBACK_H`, 72h) rather than being retried
+  forever. `load_forecast_eval()` is now a single `select ... where hit is
+  not null` — no telemetry fetch, no nearest-timestamp matching, at
+  request time at all. `FORECAST_EVAL_LOOKBACK_ROWS` is now purely a
+  "how much history to show" knob, not a performance one (could be widened
+  back past 3 days without reintroducing the old timeout risk). 4 new
+  tests, 109/109 total, ruff clean.
