@@ -44,7 +44,7 @@ flowchart LR
         L["LINE Official Account<br/>broadcast alerts"]
     end
 
-    E1 -- "telemetry (QoS0, 60 s)" --> MQ
+    E1 -- "telemetry (QoS0, 120 s)" --> MQ
     E2 -- telemetry --> MQ
     MQ -- "aquaponics/+/+/telemetry" --> W
     W -- "REST insert / upsert" --> DB
@@ -61,7 +61,7 @@ MQTT topic contract (`aquaponics/<site>/<device>/…`):
 
 | Topic | Direction | Notes |
 |---|---|---|
-| `telemetry` | device → cloud | QoS 0, JSON, one packet per minute |
+| `telemetry` | device → cloud | QoS 0, JSON, one packet every 2 min |
 | `status` | device → cloud | retained; LWT marks the device offline |
 | `cmd` | cloud → device | retained; `{"pet","pet_hot","pet_cold"}` |
 
@@ -245,7 +245,7 @@ cp include/secrets.h.example include/secrets.h   # fill in defaults
 pio run -t upload && pio device monitor
 ```
 Expected: OLED shows the pet + live T/H, RGB breathes green, serial prints
-`[MQTT] publish OK ... /telemetry` every 60 s. On first boot (or hold BOOT for
+`[MQTT] publish OK ... /telemetry` every 120 s. On first boot (or hold BOOT for
 3 s after reset) join the `AquaGuardian-Setup` Wi-Fi to enter Wi-Fi, MQTT and
 device ID.
 

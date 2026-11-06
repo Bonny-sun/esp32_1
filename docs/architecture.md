@@ -8,7 +8,7 @@
   │ DHT  OLED  RGB │ ───────────▶ │  broker    │ ──────▶ │ ingest.py       │ ─────▶ │ aqua_telemetry   │
   │ millis() FSM   │  8883 QoS0   │ pub/sub    │  QoS1   │ (worker)        │        │ aqua_devices     │
   └───────────────┘              └────────────┘         │                 │        │ aqua_*_hourly    │
-        ▲  publishes JSON every 60 s (Phase 1)           │ + baseline.py   │ ─────▶ │ aqua_forecasts   │
+        ▲  publishes JSON every 120 s (Phase 1)         │ + baseline.py   │ ─────▶ │ aqua_forecasts   │
         │                                                │   on its own    │ ◀───── │ aqua_anomalies   │
         │                                                │   30-min timer  │ (read history, write results)
         └──────────────────────────────────────────────▶ └─────────────────┘        └──────────────────┘
@@ -154,8 +154,8 @@ needed.
 |---|---|
 | Render containers run in **UTC** (naive `datetime.now()` off by 8 h) | `TZ=Asia/Taipei` in `render.yaml`; code uses `datetime.now(timezone.utc)` explicitly; DB columns are `timestamptz` |
 | Supabase **direct** connection is IPv6-only → `psycopg2 Network is unreachable` | worker uses the HTTPS PostgREST API (supabase-py), not psycopg2. If switching: use the IPv4 **pooler** string |
-| Supabase pauses a project after **7 days** with zero connections | the worker holds a persistent MQTT link and writes every 60 s → never idle |
-| Supabase free storage cap **500 MB** (~200 MB/device/year raw) | hourly rollup + 30-day raw retention via `pg_cron`; raise publish interval to 30–60 s if needed |
+| Supabase pauses a project after **7 days** with zero connections | the worker holds a persistent MQTT link and writes every 120 s → never idle |
+| Supabase free storage cap **500 MB** (~200 MB/device/year raw) | hourly rollup + 30-day raw retention via `pg_cron`; raise the publish interval further if needed |
 | Render Background Workers are **paid** | on the purchased plan (`plan: starter`) |
 
 ## 7. LINE push notifications (optional)
@@ -190,10 +190,10 @@ env var; every code path treats a missing token as "feature off".
 `aqua_check_thresholds()` (pg_cron, unchanged) still writes at most one
 `aqua_anomalies` row per device/metric/hour when a value is outside its
 `aqua_thresholds` band. The worker, once per incoming telemetry message
-(~every 60 s per device), looks for rows with `method='threshold'` and
+(~every 120 s per device), looks for rows with `method='threshold'` and
 `notified_at is null`, pushes each via LINE, and stamps `notified_at`. So
 the hourly log dedupe is also the LINE rate limit — no extra throttling
-code, and delivery lags the actual breach by at most ~1 min. Rolling
+code, and delivery lags the actual breach by at most ~2 min. Rolling
 z-score anomalies (`method='rolling_zscore'`) do **not** push — those are
 informational, not real threshold breaches.
 
@@ -1308,3 +1308,16 @@ exact version in code would have gone stale before merge.
   (`run_forecast_cycle`/`run_forecast_loop`, with an injectable `sleep` —
   same pattern as `GeminiLLMClient`'s retry backoff — to test the
   otherwise-infinite loop deterministically), 112/112 total, ruff clean.
+* **2026-11-06** — **Publish interval 60 s → 120 s** (`PUBLISH_MS` in
+  `src/main.cpp`), trading a bit of smoothing for ~half the Supabase row
+  growth (≈1440 → ≈720 rows/day). Checked every consumer that assumes a
+  cadence before changing it: `analysis/baseline.py` resamples everything
+  to 5-min buckets regardless of raw publish rate, so the AI forecast's
+  training-row counts (`LOOKBACK_H`/`GBM_LOOKBACK_H`) are unaffected;
+  the dashboard's online/offline badge (`last_seen` < 300 s) still has a
+  2.5× margin at 120 s, so no change needed there. A 300 s interval was
+  considered and rejected for this reason — it would sit right on that
+  300 s threshold and flicker the badge on ordinary network jitter, and
+  would also make the 24h trend chart's 10-min-bin resample (`dashboard/
+  app.py`, `load_history`) drop to ~2 raw points per bin, risking a
+  false "device offline" gap in the line on a single dropped packet.
