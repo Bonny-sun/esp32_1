@@ -1412,3 +1412,31 @@ exact version in code would have gone stale before merge.
   of `/admin`; `aqua_prune_auth_log()` (pg_cron, `20 3 * * *`, offset from
   `aqua_prune_raw`'s `10 3 * * *`) keeps 30 days. The insert itself is
   try/except-wrapped — a DB hiccup here must never block an actual login.
+* **2026-11-11 (later still) — `/ask` fixed: `gemini-flash-latest` had
+  stopped resolving.** Live bug report: every question on `/ask` returned
+  "發生錯誤，請稍後再試。" (the generic `except Exception` fallback in
+  `app.py`'s `send()`). `agent.py`/`tools.py` were unchanged and ruled out
+  first — `pytest` passes, and the google-genai SDK (3.1.0, installed via
+  this repo's unpinned `google-genai>=1.0`) still exposes
+  `models.generate_content`/`GenerateContentConfig`/
+  `FunctionDeclaration(parameters_json_schema=...)`/
+  `AutomaticFunctionCallingConfig` exactly as `GeminiLLMClient` uses them —
+  no SDK-shape break. Checked Google's own current docs instead
+  (`https://ai.google.dev/gemini-api/docs/deprecations`): `gemini-2.0-flash`
+  — the model `DEFAULT_MODEL = "gemini-flash-latest"` had been resolving
+  to — was shut down **2026-06-01**. The "latest" alias is documented to
+  get "hot-swapped" onto a new model with 2 weeks' notice, so it's meant to
+  never go stale on its own, but that depends on someone actually rotating
+  it before the model behind it is retired — here nobody did, so the alias
+  itself started 404ing. Fixed by pinning `DEFAULT_MODEL` to
+  `gemini-3.8-flash`, today's docs-confirmed "Default general-purpose"
+  model, rather than picking another alias — the current docs' own naming
+  guide is explicit that production apps should use a *stable* model id,
+  not a rolling "latest" one, which is the opposite of the reasoning
+  `DEFAULT_MODEL`'s original comment gave for choosing an alias in the
+  first place. `GEMINI_MODEL` (env var) still always overrides this if set
+  — if it was ever set in Render to an old model name, it needs updating
+  there too, independent of this code change. README/`.env.example`
+  updated with the same guidance. No test changes: the model string itself
+  is never exercised against the real API in `tests/test_ask_agent.py`
+  (all mocked/scripted), so nothing there needed updating.
