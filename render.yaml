@@ -55,6 +55,12 @@ services:
         sync: false
       - key: SUPABASE_SERVICE_KEY
         sync: false
+      # optional: anon/public key, used for read-only dashboard queries
+      # instead of the service-role key above (defense in depth — see
+      # dashboard/app.py's sb_read()). Dashboard falls back to the
+      # service-role key for reads if this is left unset.
+      - key: SUPABASE_ANON_KEY
+        sync: false
       - key: DASH_USERNAME
         sync: false
       - key: DASH_PASSWORD_HASH

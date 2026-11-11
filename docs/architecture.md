@@ -1338,3 +1338,21 @@ exact version in code would have gone stale before merge.
   `RateLimiter` (resets on redeploy), same reasoning: a single-instance
   personal dashboard, not a multi-tenant product. 12 new tests
   (`tests/test_auth.py`), 124/124 total, ruff clean.
+* **2026-11-11 (later)** — **Dashboard's own reads switched to the `anon`
+  key.** Found while reviewing the schema's own §6 comment ("anon key —
+  public dashboard — is read-only"): `dashboard/app.py`'s `sb()` used
+  `SUPABASE_SERVICE_KEY` for *everything*, reads included, so the anon
+  read-only RLS policies were never actually exercised by any real client
+  — dead-code-as-a-security-boundary. New `sb_read()` uses
+  `SUPABASE_ANON_KEY` for the 9 `load_*` query call sites; `set_*`/
+  `save_*` (writes) stay on `sb()` (`service_role`, bypasses RLS by
+  design). One deliberate exception: `load_all_latest()` stays on `sb()`
+  too — it queries `aqua_latest`, a plain view with no RLS policy or
+  explicit anon grant of its own (unlike every base table it's built on),
+  and this could not be verified against a live Supabase project from
+  this session, so it was left on the already-working client rather than
+  risk silently breaking the fleet overview page. `sb_read()` falls back
+  to `sb()` whenever `SUPABASE_ANON_KEY` is unset, so this is safe to
+  deploy before that env var exists. No test changes — `sb()`/`sb_read()`
+  are thread-local connection-factory glue, consistent with `sb()` itself
+  never having had its own unit test either.
