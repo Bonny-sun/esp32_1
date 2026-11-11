@@ -86,6 +86,13 @@ def test_login_lockout_success_clears_only_that_identity():
     assert lock.check("u1") is None
 
 
+def test_login_lockout_describe_reflects_the_live_config():
+    clock = {"t": 0.0}
+    lock = _lockout(clock, max_attempts=7, window_seconds=600)
+    hint = lock.describe()
+    assert "7" in hint and "10" in hint  # 600s = 10 min
+
+
 @pytest.mark.parametrize(
     "env_key, attr",
     [

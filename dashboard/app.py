@@ -1658,6 +1658,7 @@ async def ask_page() -> None:
                 ui.label("AI 問答登入").classes("text-lg font-semibold")
                 user = ui.input("帳號").classes("w-full")
                 pw = ui.input("密碼", password=True).classes("w-full")
+                ui.label(_login_lockout.describe()).classes("text-xs text-gray-400")
 
                 def try_unlock(user=user, pw=pw):
                     identity = _browser_identity()
@@ -1973,6 +1974,7 @@ async def admin_page(device: str = "") -> None:
                 ui.label("AIoT智慧物聯管理後台登入").classes("text-lg font-semibold")
                 user = ui.input("帳號").classes("w-full")
                 pw = ui.input("密碼", password=True).classes("w-full")
+                ui.label(_login_lockout.describe()).classes("text-xs text-gray-400")
 
                 def try_unlock(user=user, pw=pw):
                     identity = _browser_identity()
