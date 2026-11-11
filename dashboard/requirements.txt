@@ -11,4 +11,4 @@ bcrypt>=4.0
 # trust in eMudhra's compromised intermediates (disclosed 2026-10-19).
 certifi>=2026.10.19
 # /ask page: official Gemini Python SDK (not the deprecated google-generativeai).
-google-genai>=1.0
+google-genai>=3.0.0
