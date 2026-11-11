@@ -44,7 +44,7 @@ flowchart LR
         L["LINE Official Account<br/>broadcast alerts"]
     end
 
-    E1 -- "telemetry (QoS0, 60 s)" --> MQ
+    E1 -- "telemetry (QoS0, 120 s)" --> MQ
     E2 -- telemetry --> MQ
     MQ -- "aquaponics/+/+/telemetry" --> W
     W -- "REST insert / upsert" --> DB
@@ -61,7 +61,7 @@ MQTT topic contract (`aquaponics/<site>/<device>/…`):
 
 | Topic | Direction | Notes |
 |---|---|---|
-| `telemetry` | device → cloud | QoS 0, JSON, one packet per minute |
+| `telemetry` | device → cloud | QoS 0, JSON, one packet every 2 min |
 | `status` | device → cloud | retained; LWT marks the device offline |
 | `cmd` | cloud → device | retained; `{"pet","pet_hot","pet_cold"}` |
 
@@ -92,6 +92,32 @@ MQTT topic contract (`aquaponics/<site>/<device>/…`):
   for anomalies.
 - **Remote control** — pet skin and the pet's hot/cold expression thresholds
   are set from the dashboard via retained MQTT `cmd`.
+
+## Security
+
+- **Row Level Security on every table** — the `anon` key gets read-only
+  `SELECT` policies and no write policy at all; writes (worker, AI job) go
+  through `service_role`, which bypasses RLS by design.
+- **TLS-verified MQTT on the cloud side** — worker and dashboard both
+  validate HiveMQ's certificate (`ssl.PROTOCOL_TLS_CLIENT`). The ESP32
+  firmware itself still skips cert validation (`setInsecure()`), a
+  documented first-bring-up shortcut, not yet hardened.
+- **No raw SQL anywhere** — every DB call goes through Supabase's
+  parameterized query builder; there is no string-interpolated SQL in the
+  codebase, so there's no SQL-injection surface to begin with.
+- **Hashed admin password + brute-force lockout** (`dashboard/auth.py`) —
+  `/admin` and `/ask`'s login compares a bcrypt hash
+  (`DASH_PASSWORD_HASH`), never a plaintext password. 5 failed attempts
+  from the same browser, or 20 site-wide (to catch someone clearing
+  cookies to dodge the per-browser cap), locks login out for 15 minutes.
+  All three numbers are env-var tunable (`LOGIN_MAX_ATTEMPTS`,
+  `LOGIN_SITE_MAX_ATTEMPTS`, `LOGIN_LOCKOUT_SECONDS`).
+- **`/ask` rate limiting** — per-visitor and site-wide caps
+  (`ASK_RATE_PER_MINUTE` etc.) stop the public Gemini-backed page from
+  being hammered.
+- **AI agent on a tool whitelist** — the Gemini agent behind `/ask` can
+  only call 6 fixed, read-only, argument-validated functions
+  (`dashboard/ask/tools.py`); no SQL, no writes, ever reach the model.
 
 ## AI 問答（Tool Calling）
 
@@ -146,7 +172,7 @@ which time range) so it can be checked against the dashboard's own pages.
 | `GEMINI_API_KEY` | to enable the feature | from [Google AI Studio](https://aistudio.google.com/apikey). Unset → `/ask` shows "功能未啟用"; every other page is unaffected. |
 | `GEMINI_MODEL` | no | model id, or a Google-maintained alias like `gemini-flash-latest`. The Gemini model lineup changes often — check [the model list](https://ai.google.dev/gemini-api/docs/models) rather than assuming a name is still current. Falls back to a code-level default alias if unset. |
 | `ASK_RATE_PER_MINUTE` / `ASK_RATE_PER_DAY` / `ASK_RATE_SITE_PER_DAY` | no | abuse/cost guard: per-visitor and site-wide question caps (sane built-in defaults). In-memory counters — **reset on every restart/redeploy**, which is an accepted tradeoff for a single-instance demo site, not a design for a real multi-tenant product. |
-| `ASK_REQUIRE_AUTH` | no | `true` makes `/ask` require the same `DASH_USERNAME`/`DASH_PASSWORD` login as `/admin`. Defaults to `false` (open), matching this being a public portfolio demo. |
+| `ASK_REQUIRE_AUTH` | no | `true` makes `/ask` require the same `DASH_USERNAME`/`DASH_PASSWORD_HASH` login as `/admin`. Defaults to `false` (open), matching this being a public portfolio demo. |
 
 ### Local run
 
@@ -245,7 +271,7 @@ cp include/secrets.h.example include/secrets.h   # fill in defaults
 pio run -t upload && pio device monitor
 ```
 Expected: OLED shows the pet + live T/H, RGB breathes green, serial prints
-`[MQTT] publish OK ... /telemetry` every 60 s. On first boot (or hold BOOT for
+`[MQTT] publish OK ... /telemetry` every 120 s. On first boot (or hold BOOT for
 3 s after reset) join the `AquaGuardian-Setup` Wi-Fi to enter Wi-Fi, MQTT and
 device ID.
 

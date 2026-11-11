@@ -131,7 +131,7 @@ static const float TEMP_HYST        = 1.0f;   // must recover by this much to re
 static const uint32_t SENSOR_MS   = 2000;    // DHT11 max sample rate ~1 Hz
 static const uint32_t DISPLAY_MS  = 100;     // ~10 fps redraw (blink/shiver)
 static const uint32_t LED_MS      = 20;      // breathing LED update
-static const uint32_t PUBLISH_MS  = 60000;   // MQTT telemetry interval (1 min -> ~1440 rows/day)
+static const uint32_t PUBLISH_MS  = 120000;  // MQTT telemetry interval (2 min -> ~720 rows/day)
 static const uint32_t WIFI_RETRY_MS = 5000;
 static const uint32_t MQTT_RETRY_MS = 3000;
 

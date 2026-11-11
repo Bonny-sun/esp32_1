@@ -57,7 +57,7 @@ services:
         sync: false
       - key: DASH_USERNAME
         sync: false
-      - key: DASH_PASSWORD
+      - key: DASH_PASSWORD_HASH
         sync: false
       # same HiveMQ creds as aquaponics-ingest — lets the dashboard publish
       # pet-skin commands directly (see "外觀" section in app.py)
