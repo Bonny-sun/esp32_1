@@ -40,6 +40,7 @@ import paho.mqtt.client as mqtt
 import pandas as pd
 from ask.agent import DEFAULT_MODEL, MAX_QUESTION_CHARS, GeminiLLMClient, RateLimiter, answer_question
 from ask.tools import AskTools
+from auth import LoginLockout, check_password
 from nicegui import app, run, ui
 from supabase import create_client
 
@@ -235,14 +236,16 @@ MQTT_PORT = int(os.environ.get("MQTT_PORT", "8883"))
 MQTT_USER = os.environ.get("MQTT_USER", "")
 MQTT_PASS = os.environ.get("MQTT_PASS", "")
 DASH_USERNAME = os.environ.get("DASH_USERNAME", "")
-DASH_PASSWORD = os.environ.get("DASH_PASSWORD", "")
+# A bcrypt hash (e.g. "$2b$12$..."), never the plaintext password — generate
+# one with:  python -c "import bcrypt; print(bcrypt.hashpw(b'yourpassword', bcrypt.gensalt()).decode())"
+DASH_PASSWORD_HASH = os.environ.get("DASH_PASSWORD_HASH", "")
 # Only signs the browser-side cookie that remembers each visitor's chosen
 # theme (app.storage.user) — not a secret in the security sense, so a
 # stable default is fine; an operator can still override it.
 STORAGE_SECRET = os.environ.get("STORAGE_SECRET", "aquaponics-dashboard-theme-prefs")
 # Gate the admin page if EITHER is set, so a half-configured pair (one set,
 # one forgotten) still locks the page instead of silently leaving it open.
-ADMIN_AUTH_REQUIRED = bool(DASH_USERNAME or DASH_PASSWORD)
+ADMIN_AUTH_REQUIRED = bool(DASH_USERNAME or DASH_PASSWORD_HASH)
 
 # One client per worker thread, not one shared global — run.io_bound()
 # calls now fire genuinely concurrently (asyncio.gather across devices),
@@ -1570,6 +1573,7 @@ _ask_tools = AskTools(
     load_all_latest=load_all_latest,
 )
 _ask_rate_limiter = RateLimiter()
+_login_lockout = LoginLockout()
 _ask_llm: GeminiLLMClient | None = None  # lazy: only built on the first real
 # question, not at import time, so a misconfigured/invalid key surfaces as a
 # normal in-chat error on first use rather than crashing the whole process
@@ -1583,16 +1587,17 @@ def _get_ask_llm() -> GeminiLLMClient:
     return _ask_llm
 
 
-def _ask_identity() -> str:
-    """Stable per-browser id for rate limiting — same app.storage.user
-    (signed cookie, see STORAGE_SECRET) mechanism get_theme()/set_theme()
-    already use, not the NiceGUI connection id, so refreshing the page
-    doesn't quietly reset a visitor's quota."""
+def _browser_identity() -> str:
+    """Stable per-browser id — same app.storage.user (signed cookie, see
+    STORAGE_SECRET) mechanism get_theme()/set_theme() already use, not the
+    NiceGUI connection id, so refreshing the page doesn't quietly reset a
+    visitor's /ask quota or login-lockout state. Used by both the /ask rate
+    limiter and the login lockout (LoginLockout, in auth.py)."""
     try:
         store = app.storage.user
-        if "ask_id" not in store:
-            store["ask_id"] = secrets.token_hex(8)
-        return store["ask_id"]
+        if "browser_id" not in store:
+            store["browser_id"] = secrets.token_hex(8)
+        return store["browser_id"]
     except Exception:
         return "unknown"
 
@@ -1655,13 +1660,20 @@ async def ask_page() -> None:
                 pw = ui.input("密碼", password=True).classes("w-full")
 
                 def try_unlock(user=user, pw=pw):
-                    ok = secrets.compare_digest(user.value, DASH_USERNAME) and secrets.compare_digest(
-                        pw.value, DASH_PASSWORD
+                    identity = _browser_identity()
+                    locked = _login_lockout.check(identity)
+                    if locked:
+                        ui.notify(locked, type="negative")
+                        return
+                    ok = secrets.compare_digest(user.value, DASH_USERNAME) and check_password(
+                        pw.value, DASH_PASSWORD_HASH
                     )
                     if ok:
+                        _login_lockout.record_success(identity)
                         state["unlocked"] = True
                         gate_or_content.refresh()
                     else:
+                        _login_lockout.record_failure(identity)
                         ui.notify("帳號或密碼錯誤", type="negative")
 
                 pw.on("keydown.enter", try_unlock)
@@ -1698,7 +1710,7 @@ async def ask_page() -> None:
                     if len(question) > MAX_QUESTION_CHARS:
                         ui.notify(f"問題請在 {MAX_QUESTION_CHARS} 字以內。", type="warning")
                         return
-                    reason = _ask_rate_limiter.check(_ask_identity())
+                    reason = _ask_rate_limiter.check(_browser_identity())
                     if reason:
                         ui.notify(reason, type="warning")
                         return
@@ -1710,7 +1722,7 @@ async def ask_page() -> None:
                     state["messages"].append({"role": "assistant", "text": "思考中…"})
                     chat_log.refresh()
                     try:
-                        _ask_rate_limiter.record(_ask_identity())
+                        _ask_rate_limiter.record(_browser_identity())
                         answer = await run.io_bound(
                             answer_question, question, llm=_get_ask_llm(), tools=_ask_tools
                         )
@@ -1963,16 +1975,26 @@ async def admin_page(device: str = "") -> None:
                 pw = ui.input("密碼", password=True).classes("w-full")
 
                 def try_unlock(user=user, pw=pw):
+                    identity = _browser_identity()
+                    locked = _login_lockout.check(identity)
+                    if locked:
+                        ui.notify(locked, type="negative")
+                        return
                     # compare_digest avoids leaking a match via response-time
                     # differences; not that it matters much for a personal
-                    # dashboard, but it's free.
-                    ok = secrets.compare_digest(
-                        user.value, DASH_USERNAME
-                    ) and secrets.compare_digest(pw.value, DASH_PASSWORD)
+                    # dashboard, but it's free. The password itself goes
+                    # through bcrypt (check_password, in auth.py), not
+                    # compare_digest — DASH_PASSWORD_HASH is a hash, not
+                    # the plaintext.
+                    ok = secrets.compare_digest(user.value, DASH_USERNAME) and check_password(
+                        pw.value, DASH_PASSWORD_HASH
+                    )
                     if ok:
+                        _login_lockout.record_success(identity)
                         state["unlocked"] = True
                         gate_or_content.refresh()
                     else:
+                        _login_lockout.record_failure(identity)
                         ui.notify("帳號或密碼錯誤", type="negative")
 
                 pw.on("keydown.enter", try_unlock)

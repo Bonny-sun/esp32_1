@@ -1321,3 +1321,20 @@ exact version in code would have gone stale before merge.
   would also make the 24h trend chart's 10-min-bin resample (`dashboard/
   app.py`, `load_history`) drop to ~2 raw points per bin, risking a
   false "device offline" gap in the line on a single dropped packet.
+* **2026-11-11** — **`/admin` and `/ask` login hardened: bcrypt password
+  hash + brute-force lockout.** `DASH_PASSWORD` (plaintext env var) →
+  `DASH_PASSWORD_HASH` (bcrypt hash, verified with `bcrypt.checkpw`) —
+  a misconfigured/malformed hash fails closed, never falls back to a
+  plaintext comparison. New `dashboard/auth.py` (`check_password`,
+  `LoginLockout`) holds this logic separately from `app.py` on purpose,
+  mirroring why `ask/tools.py`/`ask/agent.py` are their own files:
+  `tests/conftest.py` deliberately never imports `dashboard.app` (it'd
+  trigger ~900 lines of NiceGUI `@ui.page` registration), so anything
+  meant to be unit-tested has to live outside it. Lockout: 5 failed
+  attempts from one browser (`LOGIN_MAX_ATTEMPTS`) or 20 site-wide
+  (`LOGIN_SITE_MAX_ATTEMPTS`, catches an attacker clearing cookies to
+  dodge the per-browser cap) locks login for 15 min
+  (`LOGIN_LOCKOUT_SECONDS`) — same in-process-memory tradeoff as `/ask`'s
+  `RateLimiter` (resets on redeploy), same reasoning: a single-instance
+  personal dashboard, not a multi-tenant product. 12 new tests
+  (`tests/test_auth.py`), 124/124 total, ruff clean.
