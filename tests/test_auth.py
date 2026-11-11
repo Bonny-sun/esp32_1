@@ -104,3 +104,21 @@ def test_login_lockout_describe_reflects_the_live_config():
 def test_login_lockout_config_reads_env_vars(monkeypatch, env_key, attr):
     monkeypatch.setenv(env_key, "42")
     assert getattr(LoginLockoutConfig(), attr) == 42
+
+
+def test_login_lockout_logs_every_failed_attempt(capsys):
+    clock = {"t": 0.0}
+    lock = _lockout(clock)
+    lock.record_failure("u1")
+    out = capsys.readouterr().out
+    assert "[auth]" in out and "login failed" in out and "u1" in out
+
+
+def test_login_lockout_logs_blocked_attempts(capsys):
+    clock = {"t": 0.0}
+    lock = _lockout(clock, max_attempts=1)
+    lock.record_failure("u1")
+    capsys.readouterr()  # discard the "login failed" line above
+    lock.check("u1")
+    out = capsys.readouterr().out
+    assert "[auth]" in out and "login blocked" in out and "u1" in out
