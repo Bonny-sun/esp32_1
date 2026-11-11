@@ -261,10 +261,35 @@ _sb_local = threading.local()
 
 
 # ---------------------------------------------------------------- 資料庫連線
+# SUPABASE_ANON_KEY (optional): Supabase dashboard -> Settings -> API ->
+# "anon public" key. Safe to not set — sb_read() below falls back to the
+# service-role client if it's empty, so this is safe to deploy before
+# that env var exists.
+SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY", "")
+
+
 def sb():
+    """service_role client — bypasses RLS. Used for writes (set_*/save_*)
+    and for the one read (load_all_latest, over the aqua_latest VIEW) that
+    has no anon-read policy of its own to ride on; see sb_read()."""
     if not hasattr(_sb_local, "client"):
         _sb_local.client = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_KEY"])
     return _sb_local.client
+
+
+def sb_read():
+    """anon-key client for read-only dashboard queries (load_*). Defense in
+    depth: every table these functions read has an anon SELECT-only RLS
+    policy and no write policy at all (sql/schema.sql §6, sql/02_thresholds.sql,
+    sql/07_notify_pause.sql) — so even if application code here had a bug
+    that tried to write through this client, the anon key physically
+    cannot. Falls back to the service-role client if SUPABASE_ANON_KEY
+    isn't set."""
+    if not SUPABASE_ANON_KEY:
+        return sb()
+    if not hasattr(_sb_local, "read_client"):
+        _sb_local.read_client = create_client(os.environ["SUPABASE_URL"], SUPABASE_ANON_KEY)
+    return _sb_local.read_client
 
 
 # ---------------------------------------------------------------- 簡易快取
@@ -310,12 +335,14 @@ def clear_cache() -> None:
 # ---------------------------------------------------------------- 讀取資料 (load_*)
 @cached(30)
 def load_devices():
-    return sb().table("aqua_devices").select("*").order("device_id").execute().data
+    return sb_read().table("aqua_devices").select("*").order("device_id").execute().data
 
 
 @cached(30)
 def load_all_latest() -> dict:
-    """{device_id: latest row} for every device — for the multi-board overview."""
+    """{device_id: latest row} for every device — for the multi-board
+    overview. Stays on sb() (service-role), not sb_read(): aqua_latest is a
+    VIEW with no RLS policy of its own (see sb()'s docstring)."""
     rows = sb().table("aqua_latest").select("*").execute().data
     return {r["device_id"]: r for r in rows}
 
@@ -332,7 +359,7 @@ def load_history(device_id: str, hours: int) -> pd.DataFrame:
     rows: list = []
     for page in range(30):                       # 30 * 1000 = 30k row ceiling
         chunk = (
-            sb().table(table).select("*").eq("device_id", device_id)
+            sb_read().table(table).select("*").eq("device_id", device_id)
             .gte(tcol, since).order(tcol, desc=True)
             .range(page * 1000, page * 1000 + 999).execute().data
         )
@@ -363,7 +390,7 @@ def load_history(device_id: str, hours: int) -> pd.DataFrame:
 def load_anomalies(device_id: str | None, limit: int = 1000) -> pd.DataFrame:
     """device_id=None fetches across every device (for a fleet-wide alarm
     list) instead of filtering to one."""
-    q = sb().table("aqua_anomalies").select("*")
+    q = sb_read().table("aqua_anomalies").select("*")
     if device_id is not None:
         q = q.eq("device_id", device_id)
     rows = q.order("ts", desc=True).limit(limit).execute().data
@@ -376,7 +403,7 @@ def load_anomalies(device_id: str | None, limit: int = 1000) -> pd.DataFrame:
 @cached(30)
 def load_forecasts(device_id: str) -> pd.DataFrame:
     rows = (
-        sb().table("aqua_forecasts").select("*").eq("device_id", device_id)
+        sb_read().table("aqua_forecasts").select("*").eq("device_id", device_id)
         .order("created_at", desc=True).limit(100).execute().data
     )
     df = pd.DataFrame(rows)
@@ -408,7 +435,7 @@ def load_forecast_eval(device_id: str, limit: int = FORECAST_EVAL_LOOKBACK_ROWS)
     run. Keep this in sync with /forecast's own auto-refresh interval
     below."""
     rows = (
-        sb().table("aqua_forecasts").select("*").eq("device_id", device_id)
+        sb_read().table("aqua_forecasts").select("*").eq("device_id", device_id)
         .not_.is_("hit", "null").order("ts_target", desc=True).limit(limit).execute().data
     )
     if not rows:
@@ -439,10 +466,10 @@ def load_global_line_paused() -> bool:
     silently re-enable pushes the user explicitly turned off, so a genuine
     read is worth one retry rather than swallowing the error."""
     try:
-        rows = sb().table("aqua_settings").select("value").eq("key", "line_push_paused").execute().data
+        rows = sb_read().table("aqua_settings").select("value").eq("key", "line_push_paused").execute().data
     except httpx.TransportError:
         time.sleep(0.5)
-        rows = sb().table("aqua_settings").select("value").eq("key", "line_push_paused").execute().data
+        rows = sb_read().table("aqua_settings").select("value").eq("key", "line_push_paused").execute().data
     return bool(rows and rows[0]["value"])
 
 
@@ -469,7 +496,7 @@ def load_device_line_paused(device_id: str):
     error."""
     try:
         rows = (
-            sb().table("aqua_devices").select("line_push_paused").eq("device_id", device_id).execute().data
+            sb_read().table("aqua_devices").select("line_push_paused").eq("device_id", device_id).execute().data
         )
         return rows[0]["line_push_paused"] if rows else None
     except Exception:
@@ -482,7 +509,7 @@ def set_device_line_paused(device_id: str, paused) -> None:
 
 @cached(30)
 def load_thresholds(device_id: str) -> dict:
-    rows = sb().table("aqua_thresholds").select("*").eq("device_id", device_id).execute().data
+    rows = sb_read().table("aqua_thresholds").select("*").eq("device_id", device_id).execute().data
     return {r["metric"]: r for r in rows}
 
 
@@ -1658,6 +1685,7 @@ async def ask_page() -> None:
                 ui.label("AI 問答登入").classes("text-lg font-semibold")
                 user = ui.input("帳號").classes("w-full")
                 pw = ui.input("密碼", password=True).classes("w-full")
+                ui.label(_login_lockout.describe()).classes("text-xs text-gray-400")
 
                 def try_unlock(user=user, pw=pw):
                     identity = _browser_identity()
@@ -1973,6 +2001,7 @@ async def admin_page(device: str = "") -> None:
                 ui.label("AIoT智慧物聯管理後台登入").classes("text-lg font-semibold")
                 user = ui.input("帳號").classes("w-full")
                 pw = ui.input("密碼", password=True).classes("w-full")
+                ui.label(_login_lockout.describe()).classes("text-xs text-gray-400")
 
                 def try_unlock(user=user, pw=pw):
                     identity = _browser_identity()

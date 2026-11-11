@@ -97,7 +97,11 @@ MQTT topic contract (`aquaponics/<site>/<device>/…`):
 
 - **Row Level Security on every table** — the `anon` key gets read-only
   `SELECT` policies and no write policy at all; writes (worker, AI job) go
-  through `service_role`, which bypasses RLS by design.
+  through `service_role`, which bypasses RLS by design. The dashboard's own
+  read-only queries (`load_*` in `dashboard/app.py`) use the `anon` key too
+  (`sb_read()`), not `service_role` — so those policies are actually
+  enforced on the dashboard's own requests, not just sitting unused. Falls
+  back to `service_role` for reads if `SUPABASE_ANON_KEY` isn't set.
 - **TLS-verified MQTT on the cloud side** — worker and dashboard both
   validate HiveMQ's certificate (`ssl.PROTOCOL_TLS_CLIENT`). The ESP32
   firmware itself still skips cert validation (`setInsecure()`), a

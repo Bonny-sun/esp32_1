@@ -95,3 +95,12 @@ class LoginLockout:
 
     def record_success(self, identity: str) -> None:
         self._per_identity.pop(identity, None)
+
+    def describe(self) -> str:
+        """Ready-to-show 繁體中文 hint for the login form itself, so the
+        policy shown to the user always matches what's actually enforced
+        (built from the live config, never a hardcoded string the caller
+        could forget to update after changing LOGIN_MAX_ATTEMPTS/
+        LOGIN_LOCKOUT_SECONDS)."""
+        minutes = self._config.window_seconds // 60
+        return f"密碼輸入錯誤達 {self._config.max_attempts} 次將鎖定登入 {minutes} 分鐘"
