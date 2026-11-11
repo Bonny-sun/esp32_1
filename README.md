@@ -104,8 +104,8 @@ MQTT topic contract (`aquaponics/<site>/<device>/…`):
   back to `service_role` for reads if `SUPABASE_ANON_KEY` isn't set.
 - **TLS-verified MQTT everywhere, including the device** — worker and
   dashboard validate HiveMQ's certificate (`ssl.PROTOCOL_TLS_CLIENT`); the
-  ESP32 firmware pins Amazon Root CA 1 (`src/main.cpp`'s
-  `HIVEMQ_ROOT_CA`, HiveMQ Cloud's certs chain to AWS) via
+  ESP32 firmware pins ISRG Root X1 (`src/main.cpp`'s
+  `HIVEMQ_ROOT_CA`; HiveMQ Cloud's certs are issued by Let's Encrypt) via
   `netClient.setCACert(...)` instead of skipping validation.
 - **No raw SQL anywhere** — every DB call goes through Supabase's
   parameterized query builder; there is no string-interpolated SQL in the
