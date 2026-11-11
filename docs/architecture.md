@@ -1391,3 +1391,24 @@ exact version in code would have gone stale before merge.
   a pinned CA against the real server's chain before shipping it — a
   firmware change like this needs a reflash of every board to take effect,
   and a wrong pin silently takes the device offline.
+* **2026-11-11 (later still)** — **Added a real login history / audit
+  log** (`sql/10_auth_log.sql`, `aqua_auth_log`). Triggered by catching an
+  overclaim: a draft write-up of this project's security work said login
+  failures "都有留存" (are all retained), but nothing actually logged them
+  — only `worker/ingest.py`'s write-status prints existed. Rather than
+  soften the claim, implemented the real thing: every `/admin`/`/ask`
+  login attempt (`success`/`failed`/`blocked`) now writes a row via a new
+  `_log_auth_event()`, called from both pages' `try_unlock()` closures
+  right where `LoginLockout` already decides the outcome. Deliberately
+  scoped down from the first draft (store IP? add a logout button?) to
+  just timestamp + attempted username + outcome — no IP, no logout
+  feature; both were judged not worth the extra exposure/complexity for a
+  single-admin personal dashboard. RLS is enabled on `aqua_auth_log` with
+  **no policy at all** (not even `anon` SELECT) — an audit log like this
+  is more useful to an attacker than to a public reader, so it's read
+  only via `sb()` (`service_role`), the one deliberate exception alongside
+  `aqua_latest` to this project's anon-key-for-reads rule. New
+  `load_auth_log()` renders the latest 100 rows as a table at the bottom
+  of `/admin`; `aqua_prune_auth_log()` (pg_cron, `20 3 * * *`, offset from
+  `aqua_prune_raw`'s `10 3 * * *`) keeps 30 days. The insert itself is
+  try/except-wrapped — a DB hiccup here must never block an actual login.

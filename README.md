@@ -127,6 +127,14 @@ MQTT topic contract (`aquaponics/<site>/<device>/…`):
   `requirements*.txt` (root, `worker/`, `dashboard/`, `analysis/`) and the
   GitHub Actions used in CI, opening a PR when a dependency has a known
   vulnerability or a newer version.
+- **Login history / audit log** (`sql/10_auth_log.sql`) — every `/admin`
+  and `/ask` login attempt (success, failed, or blocked by the lockout
+  above) is recorded with its timestamp and the attempted username, shown
+  as a table at the bottom of `/admin`. No IP is stored. Read only via
+  `service_role` (`sb()`); the table has RLS enabled with no policy at
+  all, so `anon` gets zero rows — an audit log like this is more useful
+  to an attacker than to a public reader. 30-day retention via `pg_cron`;
+  the UI itself caps at the latest 100 rows.
 
 ## AI 問答（Tool Calling）
 
