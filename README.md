@@ -128,9 +128,12 @@ MQTT topic contract (`aquaponics/<site>/<device>/…`):
   GitHub Actions used in CI, opening a PR when a dependency has a known
   vulnerability or a newer version.
 - **Login history / audit log** (`sql/10_auth_log.sql`) — every `/admin`
-  and `/ask` login attempt (success, failed, or blocked by the lockout
-  above) is recorded with its timestamp and the attempted username, shown
-  as a table at the bottom of `/admin`. No IP is stored. Read only via
+  login attempt (success, failed, or blocked by the lockout above) is
+  recorded with its timestamp and the attempted username, shown
+  as a table at the bottom of `/admin`. `/ask` has no login form by
+  default (`ASK_REQUIRE_AUTH=false`) so it has nothing to log in
+  practice, but the same logging runs there too if that flag is turned
+  on. No IP is stored. Read only via
   `service_role` (`sb()`); the table has RLS enabled with no policy at
   all, so `anon` gets zero rows — an audit log like this is more useful
   to an attacker than to a public reader. 30-day retention via `pg_cron`;
