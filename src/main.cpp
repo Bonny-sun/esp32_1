@@ -11,7 +11,7 @@
 //
 // 程式架構：
 //   一、設定與常數          【1-1】引入函式庫  【1-2】密碼檔 secrets.h  【1-3】腳位  【1-4】寵物冷熱門檻
-//                           【1-5】時間間隔  【1-6】RGB 燈 PWM  【1-7】設定入口網頁
+//                           【1-5】時間間隔  【1-6】RGB 燈 PWM  【1-7】設定入口網頁  【1-8】HiveMQ 憑證
 //   二、全域變數            【2-1】硬體與連線物件  【2-2】可被網頁/雲端修改的設定  【2-3】設定網頁欄位
 //                           【2-4】MQTT 主題  【2-5】心情與寵物狀態  【2-6】存檔後延遲重啟旗標
 //   三、共用小工具          【3-1】四捨五入  【3-2】控制 RGB 燈  【3-3】時間字串  【3-4】寵物外觀 ⇄ 文字
@@ -144,6 +144,33 @@ static const char*    AP_NAME          = "AquaGuardian-Setup";
 static const char*    AP_PASSWORD      = "aquaguardian";  // >= 8 chars; WPA2 on the setup AP (open APs are flaky on Android)
 static const int      PIN_CONFIG_BTN   = 0;      // BOOT button — hold 3 s AFTER power-on to force the portal
 static const uint16_t PORTAL_TIMEOUT_S = 180;    // portal auto-closes after this idle time
+
+// ---- 【1-8】HiveMQ Cloud 的信任根憑證（驗證 MQTT TLS 連線用的，不是帳密，可以公開）----
+// HiveMQ Cloud 的伺服器憑證是由 Amazon 簽發的（他們的雲端主機架在 AWS 上），
+// 所以這裡放 Amazon 官方公開的 Root CA 1，原文取自：
+// https://www.amazontrust.com/repository/AmazonRootCA1.pem （沒有做任何修改）
+static const char HIVEMQ_ROOT_CA[] = R"EOF(
+-----BEGIN CERTIFICATE-----
+MIIDQTCCAimgAwIBAgITBmyfz5m/jAo54vB4ikPmljZbyjANBgkqhkiG9w0BAQsF
+ADA5MQswCQYDVQQGEwJVUzEPMA0GA1UEChMGQW1hem9uMRkwFwYDVQQDExBBbWF6
+b24gUm9vdCBDQSAxMB4XDTE1MDUyNjAwMDAwMFoXDTM4MDExNzAwMDAwMFowOTEL
+MAkGA1UEBhMCVVMxDzANBgNVBAoTBkFtYXpvbjEZMBcGA1UEAxMQQW1hem9uIFJv
+b3QgQ0EgMTCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBALJ4gHHKeNXj
+ca9HgFB0fW7Y14h29Jlo91ghYPl0hAEvrAIthtOgQ3pOsqTQNroBvo3bSMgHFzZM
+9O6II8c+6zf1tRn4SWiw3te5djgdYZ6k/oI2peVKVuRF4fn9tBb6dNqcmzU5L/qw
+IFAGbHrQgLKm+a/sRxmPUDgH3KKHOVj4utWp+UhnMJbulHheb4mjUcAwhmahRWa6
+VOujw5H5SNz/0egwLX0tdHA114gk957EWW67c4cX8jJGKLhD+rcdqsq08p8kDi1L
+93FcXmn/6pUCyziKrlA4b9v7LWIbxcceVOF34GfID5yHI9Y/QCB/IIDEgEw+OyQm
+jgSubJrIqg0CAwEAAaNCMEAwDwYDVR0TAQH/BAUwAwEB/zAOBgNVHQ8BAf8EBAMC
+AYYwHQYDVR0OBBYEFIQYzIU07LwMlJQuCFmcx7IQTgoIMA0GCSqGSIb3DQEBCwUA
+A4IBAQCY8jdaQZChGsV2USggNiMOruYou6r4lK5IpDB/G/wkjUu0yKGX9rbxenDI
+U5PMCCjjmCXPI6T53iHTfIUJrU6adTrCC2qJeHZERxhlbI1Bjjt/msv0tadQ1wUs
+N+gDS63pYaACbvXy8MWy7Vu33PqUXHeeE6V/Uq2V8viTO96LXFvKWlJbYK8U90vv
+o/ufQJVtMVT8QtPHRh8jrdkPSHCa2XV4cdFyQzR1bldZwgJcJmApzyMZFo6IQ6XU
+5MsI+yMRQ+hDKXJioaldXgjUkK642M4UwtBV8ob2xJNDd2ZhwLnoQdeXeGADbkpy
+rqXRfboQnoZsG4q5WTP468SQvvG5
+-----END CERTIFICATE-----
+)EOF";
 
 // ============================================================================
 // 二、全域變數：整支程式共用的物件與狀態（變數名 g_ 開頭 = 全域 global）
@@ -977,9 +1004,9 @@ void setup() {
   }
 
   // ---- 【10-6】設定 MQTT 連線參數（連線動作本身由 9-3 的 tickMqtt 負責）----
-  // TLS: skip cert validation for first bring-up.
-  // For production pin the CA:  netClient.setCACert(HIVEMQ_ROOT_CA);
-  netClient.setInsecure();
+  // TLS：驗證伺服器憑證(見【1-8】)，不是只加密不驗證(setInsecure)了——
+  // 如果連不上，先看序列埠有沒有印出 TLS/handshake 相關錯誤。
+  netClient.setCACert(HIVEMQ_ROOT_CA);
 
   mqtt.setServer(g_mqttHost.c_str(), g_mqttPort);
   mqtt.setCallback(mqttCallback);

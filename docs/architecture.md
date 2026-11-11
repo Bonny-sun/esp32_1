@@ -1356,3 +1356,18 @@ exact version in code would have gone stale before merge.
   deploy before that env var exists. No test changes — `sb()`/`sb_read()`
   are thread-local connection-factory glue, consistent with `sb()` itself
   never having had its own unit test either.
+* **2026-11-11 (later still)** — **ESP32 firmware now validates HiveMQ's
+  TLS certificate** instead of `netClient.setInsecure()`. HiveMQ Cloud's
+  servers are hosted on AWS, so their certs chain to Amazon's public
+  roots; pinned `src/main.cpp`'s new `HIVEMQ_ROOT_CA` (§1-8) to the exact,
+  unmodified text of Amazon Root CA 1, fetched straight from Amazon's own
+  trust repository (`https://www.amazontrust.com/repository/AmazonRootCA1.pem`)
+  and verified as a valid, correctly self-signed root (`openssl x509
+  -noout -subject -issuer`: both read "Amazon Root CA 1") rather than
+  typed from memory, since a single wrong byte in a certificate breaks
+  every device's MQTT connection with no easy remote fix. Added
+  `.github/dependabot.yml` the same day (weekly `pip` scans for every
+  `requirements*.txt`, plus `github-actions`) — the combination closes
+  the two items (OWASP #2 and #6) left over from the earlier security
+  pass, alongside the `anon`-key read switch and the login hardening
+  above.

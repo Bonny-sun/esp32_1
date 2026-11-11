@@ -102,10 +102,11 @@ MQTT topic contract (`aquaponics/<site>/<device>/…`):
   (`sb_read()`), not `service_role` — so those policies are actually
   enforced on the dashboard's own requests, not just sitting unused. Falls
   back to `service_role` for reads if `SUPABASE_ANON_KEY` isn't set.
-- **TLS-verified MQTT on the cloud side** — worker and dashboard both
-  validate HiveMQ's certificate (`ssl.PROTOCOL_TLS_CLIENT`). The ESP32
-  firmware itself still skips cert validation (`setInsecure()`), a
-  documented first-bring-up shortcut, not yet hardened.
+- **TLS-verified MQTT everywhere, including the device** — worker and
+  dashboard validate HiveMQ's certificate (`ssl.PROTOCOL_TLS_CLIENT`); the
+  ESP32 firmware pins Amazon Root CA 1 (`src/main.cpp`'s
+  `HIVEMQ_ROOT_CA`, HiveMQ Cloud's certs chain to AWS) via
+  `netClient.setCACert(...)` instead of skipping validation.
 - **No raw SQL anywhere** — every DB call goes through Supabase's
   parameterized query builder; there is no string-interpolated SQL in the
   codebase, so there's no SQL-injection surface to begin with.
@@ -122,6 +123,10 @@ MQTT topic contract (`aquaponics/<site>/<device>/…`):
 - **AI agent on a tool whitelist** — the Gemini agent behind `/ask` can
   only call 6 fixed, read-only, argument-validated functions
   (`dashboard/ask/tools.py`); no SQL, no writes, ever reach the model.
+- **Dependency scanning** — `.github/dependabot.yml` watches every
+  `requirements*.txt` (root, `worker/`, `dashboard/`, `analysis/`) and the
+  GitHub Actions used in CI, opening a PR when a dependency has a known
+  vulnerability or a newer version.
 
 ## AI 問答（Tool Calling）
 
