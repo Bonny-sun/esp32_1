@@ -2086,11 +2086,7 @@ async def admin_page(device: str = "") -> None:
 
         with ui.card().classes(SECTION_CARD_CLASSES).props("flat"):
             ui.label("登入紀錄").classes("text-lg font-semibold")
-            ui.label(
-                "顯示後台登入紀錄（成功／失敗／被鎖定），最近 100 筆，只有後台看得到；"
-                "資料庫保留 30 天後自動清除。（/ask 平時不需要登入，開啟 ASK_REQUIRE_AUTH "
-                "才會一起記錄在這裡）"
-            ).classes("text-xs text-gray-400 mb-1")
+            ui.label("顯示後台登入紀錄（成功／失敗／被鎖定）").classes("text-xs text-gray-400 mb-1")
             auth_log = await run.io_bound(load_auth_log)
             if auth_log.empty:
                 ui.label("尚無登入紀錄。").classes("text-sm text-gray-400")
