@@ -2111,7 +2111,7 @@ async def admin_page(device: str = "") -> None:
                     for n, lb in [
                         ("ts", "時間"),
                         ("page", "頁面"),
-                        ("username", "嘗試帳號"),
+                        ("username", "帳號"),
                         ("event", "結果"),
                     ]
                 ]

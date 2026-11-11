@@ -77,10 +77,17 @@ logger = logging.getLogger(__name__)
 MAX_TOOL_ROUNDS = 4
 MAX_QUESTION_CHARS = 300
 # ---- 【1-2】Gemini 模型、單次逾時（60 秒）、失敗重試（最多再試 2 次，間隔 1 秒）----
-DEFAULT_MODEL = "gemini-flash-latest"  # a Google-maintained alias for the
-# current recommended Flash model, not a dated version — the model landscape
-# moves fast enough that pinning an exact name here would go stale; GEMINI_MODEL
-# always wins when set, this is only the fallback if it's unset.
+DEFAULT_MODEL = "gemini-3.8-flash"  # the current (2026-11) recommended
+# general-purpose Flash model per https://ai.google.dev/gemini-api/docs/models.
+# Used to be the "gemini-flash-latest" rolling alias instead, on the theory
+# that an alias never goes stale — but Google's own naming-convention docs
+# now say the opposite for production: "Stable ... Most production apps
+# should use a specific stable model", and this exact alias was confirmed
+# (via a live production failure on /ask, every question erroring out) to
+# stop resolving once the model it had been pointing to, gemini-2.0-flash,
+# was shut down 2026-06-01 — so "latest" only avoided staleness as long as
+# someone was watching to catch a shutdown before the alias itself broke.
+# GEMINI_MODEL always wins when set, this is only the fallback if it's unset.
 DEFAULT_MAX_OUTPUT_TOKENS = 1024
 # Per-call HTTP timeout for a single generate_content request (one round of
 # the agent loop, not the whole question). 20s was too tight in practice —
