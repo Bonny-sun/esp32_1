@@ -529,6 +529,30 @@ def save_thresholds(device_id: str, edits: dict) -> None:
     clear_cache()
 
 
+# ---------------------------------------------------------------- 登入紀錄 (auth log)
+@cached(10)
+def load_auth_log(limit: int = 100) -> pd.DataFrame:
+    """Latest /admin、/ask login attempts (sql/10_auth_log.sql). Reads via
+    sb() (service_role), not sb_read(): that table deliberately has no anon
+    SELECT policy — a login audit log is more useful to an attacker than to
+    a public reader (see that file's own comment)."""
+    rows = sb().table("aqua_auth_log").select("*").order("ts", desc=True).limit(limit).execute().data
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        df["ts"] = pd.to_datetime(df["ts"], utc=True, format="ISO8601").dt.tz_convert(TZ)
+    return df
+
+
+def _log_auth_event(page: str, username: str, event: str) -> None:
+    """Best-effort insert into aqua_auth_log. Wrapped so a DB hiccup here
+    never blocks the login/lockout decision itself, which has already been
+    made by the time this is called."""
+    try:
+        sb().table("aqua_auth_log").insert({"page": page, "username": username, "event": event}).execute()
+    except Exception as exc:
+        print(f"[auth] failed to write auth log: {exc}", flush=True)
+
+
 # ---------------------------------------------------------------- 寫入/控制裝置 (save_*/publish_*)
 def publish_cmd(site_id: str, device_id: str, payload: dict) -> None:
     """Publish a retained MQTT command the ESP32 applies immediately (no
@@ -1691,6 +1715,7 @@ async def ask_page() -> None:
                     identity = _browser_identity()
                     locked = _login_lockout.check(identity)
                     if locked:
+                        _log_auth_event("ask", user.value, "blocked")
                         ui.notify(locked, type="negative")
                         return
                     ok = secrets.compare_digest(user.value, DASH_USERNAME) and check_password(
@@ -1698,10 +1723,12 @@ async def ask_page() -> None:
                     )
                     if ok:
                         _login_lockout.record_success(identity)
+                        _log_auth_event("ask", user.value, "success")
                         state["unlocked"] = True
                         gate_or_content.refresh()
                     else:
                         _login_lockout.record_failure(identity)
+                        _log_auth_event("ask", user.value, "failed")
                         ui.notify("帳號或密碼錯誤", type="negative")
 
                 pw.on("keydown.enter", try_unlock)
@@ -2007,6 +2034,7 @@ async def admin_page(device: str = "") -> None:
                     identity = _browser_identity()
                     locked = _login_lockout.check(identity)
                     if locked:
+                        _log_auth_event("admin", user.value, "blocked")
                         ui.notify(locked, type="negative")
                         return
                     # compare_digest avoids leaking a match via response-time
@@ -2020,10 +2048,12 @@ async def admin_page(device: str = "") -> None:
                     )
                     if ok:
                         _login_lockout.record_success(identity)
+                        _log_auth_event("admin", user.value, "success")
                         state["unlocked"] = True
                         gate_or_content.refresh()
                     else:
                         _login_lockout.record_failure(identity)
+                        _log_auth_event("admin", user.value, "failed")
                         ui.notify("帳號或密碼錯誤", type="negative")
 
                 pw.on("keydown.enter", try_unlock)
@@ -2053,6 +2083,39 @@ async def admin_page(device: str = "") -> None:
                 "text-xs text-gray-400 mb-1"
             )
             display_section()
+
+        with ui.card().classes(SECTION_CARD_CLASSES).props("flat"):
+            ui.label("登入紀錄").classes("text-lg font-semibold")
+            ui.label(
+                "/admin、/ask 最近 100 筆登入嘗試（成功／失敗／被鎖定），只有後台看得到；"
+                "資料庫保留 30 天後自動清除。"
+            ).classes("text-xs text-gray-400 mb-1")
+            auth_log = await run.io_bound(load_auth_log)
+            if auth_log.empty:
+                ui.label("尚無登入紀錄。").classes("text-sm text-gray-400")
+            else:
+                EVENT_LABEL = {"success": "成功", "failed": "失敗", "blocked": "被鎖定"}
+                PAGE_LABEL = {"admin": "後台設定", "ask": "AI 問答"}
+                auth_rows = [
+                    {
+                        "id": r["id"],
+                        "ts": r["ts"].strftime("%Y-%m-%d %H:%M:%S"),
+                        "page": PAGE_LABEL.get(r["page"], r["page"]),
+                        "username": r["username"],
+                        "event": EVENT_LABEL.get(r["event"], r["event"]),
+                    }
+                    for _, r in auth_log.iterrows()
+                ]
+                auth_cols = [
+                    {"name": n, "label": lb, "field": n, "align": "left", "headerClasses": "bg-green text-white"}
+                    for n, lb in [
+                        ("ts", "時間"),
+                        ("page", "頁面"),
+                        ("username", "嘗試帳號"),
+                        ("event", "結果"),
+                    ]
+                ]
+                ui.table(columns=auth_cols, rows=auth_rows, row_key="id").classes("w-full")
 
     def on_refresh_click():
         # No auto ui.timer for this page — unlike the read-only pages, a
