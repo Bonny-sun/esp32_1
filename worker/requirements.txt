@@ -10,4 +10,4 @@ certifi>=2026.10.19
 # job now runs inside this worker — see ingest.py's module docstring).
 pandas>=2.2
 numpy>=1.26
-scikit-learn>=1.4
+scikit-learn>=1.9.1
