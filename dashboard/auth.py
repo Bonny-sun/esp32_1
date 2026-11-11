@@ -5,7 +5,8 @@
 類別：後端（Backend）── /admin、/ask 登入表單用的安全邏輯，純函式/類別，沒有畫面。
 目的：兩件事
       1. 密碼驗證：拿使用者輸入的密碼跟 bcrypt 雜湊值比對，絕不比對明碼
-      2. 登入失敗限流：同一瀏覽器連續猜錯太多次就鎖一段時間，防止暴力破解
+      2. 登入失敗限流：同一瀏覽器連續猜錯太多次就鎖一段時間，防止暴力破解，
+         每次失敗跟每次被擋下的嘗試都會印出一行紀錄（Render 的 log 看得到）
 獨立成這支檔案（沒有放進 app.py）：是為了能在不載入 NiceGUI 頁面的情況下被
 測試——跟 ask/tools.py、ask/agent.py 分離出來的理由一樣（見 tests/conftest.py
 的說明：匯入 app.py 會順便觸發它裡面近千行的 NiceGUI 頁面註冊）。
@@ -75,13 +76,18 @@ class LoginLockout:
         return [t for t in timestamps if t > cutoff]
 
     def check(self, identity: str) -> str | None:
-        """None = allowed to try; otherwise a ready-to-show 繁體中文 reason."""
+        """None = allowed to try; otherwise a ready-to-show 繁體中文 reason.
+        Logs a blocked attempt (print, not just the UI notice) — this is
+        the stronger signal of the two: someone still trying after already
+        being locked out, as opposed to an ordinary wrong-password typo."""
         now = self._now()
         cutoff = now - self._config.window_seconds
         minutes = self._config.window_seconds // 60
         if len(self._prune(self._per_identity.get(identity, []), cutoff)) >= self._config.max_attempts:
+            print(f"[auth] login blocked: identity={identity} over per-identity limit", flush=True)
             return f"登入失敗次數過多，請 {minutes} 分鐘後再試。"
         if len(self._prune(self._site, cutoff)) >= self._config.site_max_attempts:
+            print(f"[auth] login blocked: site-wide limit reached (identity={identity})", flush=True)
             return "登入嘗試次數異常，請稍後再試。"
         return None
 
@@ -92,6 +98,11 @@ class LoginLockout:
         self._per_identity[identity] = pruned
         self._site = self._prune(self._site, now - self._config.window_seconds)
         self._site.append(now)
+        print(
+            f"[auth] login failed: identity={identity} ({len(pruned)}/{self._config.max_attempts} "
+            f"in this window)",
+            flush=True,
+        )
 
     def record_success(self, identity: str) -> None:
         self._per_identity.pop(identity, None)
