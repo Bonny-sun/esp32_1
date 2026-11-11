@@ -4,7 +4,7 @@
 // 目的：ESP32 接上溫濕度感測器、OLED 螢幕、RGB 燈，共做 4 件事：
 //       1. 每 2 秒讀一次溫濕度
 //       2. 螢幕左邊用一隻「虛擬寵物」(水滴/魚/貓/熊貓)表達冷熱心情，右邊顯示數值與時間
-//       3. 每 60 秒把資料用 MQTT 送到雲端（再由後端 worker 存進資料庫）
+//       3. 每 2 分鐘把資料用 MQTT 送到雲端（再由後端 worker 存進資料庫）
 //       4. 可用手機連網頁設定 Wi-Fi，也能從儀表板遠端換寵物外觀、改冷熱門檻
 // 資料流向：感測器(DHT) ──> 【本程式】 ──MQTT──> 雲端後端
 //           儀表板網頁 ──MQTT 指令──> 【本程式】（換寵物、改門檻）
@@ -790,7 +790,7 @@ void publishTelemetry() {
   g_lastPublishFlash = millis();
 }
 
-// ---- 【8-6】定時發布：每 60 秒呼叫一次 8-5（MQTT 沒連上就先不送）----
+// ---- 【8-6】定時發布：每 2 分鐘（PUBLISH_MS）呼叫一次 8-5（MQTT 沒連上就先不送）----
 void tickPublish() {
   static uint32_t last = 0;
   if (millis() - last < PUBLISH_MS) return;
