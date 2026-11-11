@@ -1371,3 +1371,23 @@ exact version in code would have gone stale before merge.
   the two items (OWASP #2 and #6) left over from the earlier security
   pass, alongside the `anon`-key read switch and the login hardening
   above.
+* **2026-11-11 (correction)** — **Fixed the pinned CA: ISRG Root X1, not
+  Amazon Root CA 1.** The entry above assumed HiveMQ Cloud's certificates
+  chain to Amazon because the clusters run on AWS. That was wrong, and it
+  broke the flashed device: the serial monitor looped on
+  `[MQTT] failed, rc=-2` / `X509 - Certificate verification failed`
+  (mbedTLS -9984) and no telemetry reached Supabase. Checked against the
+  live cluster with `openssl s_client -showcerts`: the chain is
+  `*.s1.eu.hivemq.cloud` ← Let's Encrypt `YR1` ← `ISRG Root YR` ←
+  **`ISRG Root X1`**, so Amazon's root can never validate it
+  (`unable to get local issuer certificate`, reproduced with `-CAfile`
+  holding only the old pin). Now pinned to ISRG Root X1 (SHA-256
+  `96:BC:EC:06:26:49:76:F3:74:60:77:9A:CF:28:C5:A7:CF:E8:A3:C0:AA:E1:1A:8F:FC:EE:05:C0:BD:DF:08:C6`,
+  valid to 2035-06-04), taken from the system trust store and checked
+  against that published fingerprint; `openssl s_client -CAfile` with only
+  this one certificate verifies the live cluster (`Verify return code: 0`).
+  The root is what's pinned, not the 90-day leaf or the intermediates, so
+  Let's Encrypt's routine renewals don't break devices. **Lesson:** verify
+  a pinned CA against the real server's chain before shipping it — a
+  firmware change like this needs a reflash of every board to take effect,
+  and a wrong pin silently takes the device offline.
