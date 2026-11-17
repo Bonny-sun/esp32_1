@@ -1584,3 +1584,65 @@ exact version in code would have gone stale before merge.
   `esp32-aqua-01`'s flagged one without itself being flagged — a real
   multi-tool reasoning result, not a canned response. Closes the one
   unchecked item in PR #202's test plan.
+* **2026-11-18 — MCP/RAG polish: relevance threshold, read-only hints,
+  isError, FAQ gap, trailing slash.** Prompted by a round of real testing
+  against the live deploy that turned up 5 concrete issues, not a design
+  review — each one fixed with the smallest change that actually closes it.
+  1. **`search_manual` had no relevance floor.** `match_aqua_kb()` always
+     returns its `match_count` nearest rows, however far away the nearest
+     one actually is — confirmed live: genuinely relevant questions scored
+     0.72-0.82, a clearly unrelated one ("今天天氣如何") still came back
+     with 5 rows at 0.63-0.66. Added `SIMILARITY_THRESHOLD = 0.70`
+     (`ask/tools.py`, with the measured numbers in its own comment) and
+     filter below it before results reach the model; an all-filtered call
+     now reports `{"rows": 0, "results": [], "note": "知識庫沒有相關資訊"}`
+     instead of 5 irrelevant rows the model might try to answer from. Lives
+     in `AskTools.search_manual()` itself, so `/ask` and the MCP tool share
+     one behaviour by construction, not by keeping two copies in sync.
+     Also added a line to `TOOL_SCHEMAS`' `search_manual` description
+     telling the model to say plainly when the knowledge base has nothing,
+     not fill the gap itself — read by both call sites for the same reason.
+  2. **MCP tools had no safety annotations.** All 7 are pure Supabase
+     reads — none writes, none is unsafe to repeat, none reaches outside
+     this system's own data — so `mcp_server.py` now registers every tool
+     with `ToolAnnotations(read_only_hint=True, destructive_hint=False,
+     idempotent_hint=True, open_world_hint=False)`, checked against the
+     installed SDK's actual field names (`readOnlyHint`/etc. on the wire)
+     rather than assumed.
+  3. **Tool errors never set `isError`.** `AskTools` methods are designed
+     to never raise (`{"error": ...}` is a normal return value `/ask`'s
+     Gemini loop depends on) — but the MCP spec gives a client its own
+     `isError` signal for exactly this, and nothing set it. Tried raising
+     an exception first; the SDK always prefixes a raised message with
+     `"Error executing tool <name>: "`, losing the exact original text.
+     Fixed by having `mcp_server.py`'s new `_wrap_as_mcp_tool()` check the
+     dict for an `"error"` key and, if present, return a
+     `CallToolResult(isError=True, content=[...])` directly instead of the
+     plain dict — `AskTools` itself is completely unchanged, so `/ask`
+     still gets the same dict it always has.
+  4. **The Wi-Fi-reset FAQ never named the setup hotspot.** Checked
+     `src/main.cpp` rather than assume: `AP_NAME` is `"AquaGuardian-Setup"`,
+     `AP_PASSWORD` is `"aquaguardian"` (also shown live on the OLED during
+     setup). Added both to that entry in `tools/kb_content.py`. Not
+     re-embedded in this change — `tools/build_kb_embeddings.py` needs
+     `SUPABASE_SERVICE_KEY` to write, so that's a manual follow-up step for
+     whoever has it, same as every other `kb_content.py` edit.
+  5. **Bare `/mcp` 307-redirects to `/mcp/`.** Confirmed live and root-
+     caused: Starlette's `Mount("/mcp", ...)` compiles a regex that only
+     ever matches `/mcp/` plus whatever follows, never the bare prefix with
+     zero trailing characters — so the *outer* app's own redirect-slash
+     fallback is what answers the bare case, not the mount. Tried three
+     ways to make the bare path respond directly (disabling
+     `redirect_slashes` on the whole shared FastAPI app NiceGUI owns;
+     nesting a nested `Router`; a hand-rolled raw-ASGI route for just that
+     path) — the first changes every other route's trailing-slash
+     behaviour for a cosmetic gain, the others got progressively hackier
+     without fully working. Chose documentation over code: README now
+     says `/mcp/` (trailing slash) everywhere a client config is shown,
+     which never redirects, and explains why the code-level fix wasn't
+     worth it.
+
+  4 new tests (`tests/test_ask_tools.py`: threshold keeps/drops/all-dropped;
+  `tests/test_mcp_server.py`: every tool's annotations, `isError` with the
+  exact original message on two different error shapes). 144/144 total,
+  ruff clean.

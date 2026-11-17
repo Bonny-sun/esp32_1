@@ -211,9 +211,10 @@ which time range) so it can be checked against the dashboard's own pages.
 ### MCP server
 
 The same `AskTools` instance `/ask` uses is also exposed as an
-[MCP](https://modelcontextprotocol.io) server at `/mcp` — so any MCP client
-(Claude Desktop, Claude Code, ...) can call `list_devices`/`get_stats`/
-`search_manual`/etc. directly, without going through Gemini at all.
+[MCP](https://modelcontextprotocol.io) server at **`/mcp/`** (trailing
+slash — see the note below) — so any MCP client (Claude Desktop, Claude
+Code, ...) can call `list_devices`/`get_stats`/`search_manual`/etc.
+directly, without going through Gemini at all.
 `dashboard/mcp_server.py` registers one MCP tool per entry in
 `ask/tools.py`'s `TOOL_SCHEMAS` (same name, same description Gemini sees —
 one source of truth, not a second hand-maintained copy), using the official
@@ -230,6 +231,33 @@ via `app.mount()` does **not** auto-run its lifespan — without manually
 entering/exiting `session_manager.run()` from NiceGUI's own
 `app.on_startup`/`app.on_shutdown`, every real request 500s with "Task group
 is not initialized".
+
+**Trailing slash.** `https://<host>/mcp` (no trailing slash) 307-redirects
+to `/mcp/`, and some MCP clients don't replay a `POST` correctly across
+that redirect. Removing the redirect cleanly needs either disabling
+`redirect_slashes` on the whole shared FastAPI app NiceGUI itself owns
+(too broad — it'd change every other route's trailing-slash behaviour too,
+for a cosmetic gain) or a hand-rolled raw-ASGI route for the bare path
+(fragile, more code than the problem is worth). Simplest fix that's
+actually proportionate: always configure MCP clients with the trailing
+slash, `https://<host>/mcp/`, which never redirects at all.
+
+**Tool safety metadata.** Every tool is registered with
+`readOnlyHint=true`, `destructiveHint=false`, `idempotentHint=true`,
+`openWorldHint=false` — accurate for all 7, since none of them write
+anything or reach outside this system's own data. A known error (unknown
+`device_id`, invalid `metric`, ...) comes back as `isError: true` with the
+same message text `ask/tools.py` already produces — `AskTools` itself still
+never raises (so `/ask`'s Gemini loop is unaffected), only this MCP layer
+translates `{"error": ...}` into the protocol's own error signal.
+
+**`search_manual`'s relevance filter.** Results below
+`SIMILARITY_THRESHOLD` (0.70, in `ask/tools.py` — see that constant's own
+comment for the measured scores it's based on) are dropped before they
+reach the model, on both `/ask` and MCP (one shared implementation, so
+this can't drift between the two). If everything is filtered out, the
+result is `{"rows": 0, "results": [], "note": "知識庫沒有相關資訊"}` rather
+than 5 unrelated rows the model might otherwise try to answer from.
 
 ### Environment variables
 

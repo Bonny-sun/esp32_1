@@ -5,7 +5,7 @@
 類別：MCP（Model Context Protocol）伺服器 ── 讓任何支援 MCP 的用戶端（Claude
       Desktop、Claude Code 等）能直接連進來查詢這套系統的資料，不透過 /ask
       頁面、不透過 Gemini。
-目的：把 ask/tools.py 的 AskTools 那 6 個唯讀工具函式，原封不動包成 MCP 協定
+目的：把 ask/tools.py 的 AskTools 那 7 個唯讀工具函式，原封不動包成 MCP 協定
       看得懂的工具——邏輯完全沒有重寫，只是多一層介面，所以這支檔案本身沒有
       任何商業邏輯，純粹是「轉接」。
 資料流向：MCP 用戶端 ──(HTTP, Streamable HTTP transport)──> 【本程式】
@@ -17,7 +17,8 @@
 
 程式架構：
   一、驗證          【1-1】RequireApiKey ASGI 中介層
-  二、建立 MCP 伺服器 【2-1】build_mcp_server() 把 AskTools 包成 MCP 工具
+  二、建立 MCP 伺服器 【2-1a】_wrap_as_mcp_tool() 錯誤轉 isError
+                     【2-1b】build_mcp_server() 把 AskTools 包成 MCP 工具
   三、掛載與生命週期   【3-1】build_mcp_asgi_app()  【3-2】session 啟動/關閉
 
 備註：
@@ -38,20 +39,51 @@
                                          的 TOOL_SCHEMAS 跟 AskTools 本身，
                                          這支檔案只是依照 TOOL_SCHEMAS 的
                                          名稱/說明文字自動註冊
+  為什麼錯誤要在這裡轉成 isError=True ... AskTools 的方法設計成「不丟例外,
+                                         失敗回傳 {"error": ...}」(給 /ask
+                                         的 Gemini 迴圈用),但 MCP 協定有
+                                         自己的 isError 欄位讓用戶端能明確
+                                         分辨「查到資料」跟「查詢失敗」。
+                                         這裡只在 MCP 這一層把 {"error":
+                                         ...} 轉成 isError=True,AskTools
+                                         本身完全不動,/ask 拿到的還是原本
+                                         的 {"error": ...} dict
+  為什麼不直接 raise 例外來設 isError .... 試過 — MCP SDK 會把例外訊息包成
+                                         "Error executing tool <name>:
+                                         <msg>",不是原始錯誤訊息本身。
+                                         改成直接回傳 CallToolResult(
+                                         isError=True, content=[...]),
+                                         才能讓 content 文字就是 AskTools
+                                         原本的錯誤字串,不多包一層
 
 ╚════════════════════════════════════════════════════════════════════════════╝
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import functools
+from typing import TYPE_CHECKING, Any
 
 from ask.tools import TOOL_SCHEMAS, AskTools
 from mcp.server.mcpserver import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
+from mcp.types import CallToolResult, TextContent, ToolAnnotations
 from starlette.responses import PlainTextResponse
 
 if TYPE_CHECKING:
     from starlette.types import ASGIApp, Receive, Scope, Send
+
+# Every AskTools method is a pure Supabase read with a fixed, small set of
+# possible calls — none of them write anything, repeat-calling one is
+# always safe, and none of them reach outside this system's own data.
+# Verified against the MCP spec's actual field names (readOnlyHint/
+# destructiveHint/idempotentHint/openWorldHint on the wire) before writing
+# this, not assumed from memory.
+_READ_ONLY_TOOL_ANNOTATIONS = ToolAnnotations(
+    read_only_hint=True,
+    destructive_hint=False,
+    idempotent_hint=True,
+    open_world_hint=False,
+)
 
 # ============================================================================
 # 一、驗證：固定 API Key，比對 Authorization header
@@ -88,7 +120,34 @@ class RequireApiKey:
 # ============================================================================
 
 
-# ---- 【2-1】依照 TOOL_SCHEMAS 的名稱/說明文字,把 tools 身上對應的方法逐一註冊進去 ----
+# ---- 【2-1a】把 AskTools 方法包一層：回傳 dict 有 "error" 就轉成 isError=True,其餘原封不動轉交 ----
+def _wrap_as_mcp_tool(method: Any) -> Any:
+    """Wraps a bound AskTools method so a `{"error": ...}` result becomes an
+    MCP `CallToolResult(isError=True, ...)` whose content is exactly that
+    error string — not AskTools itself, only how the MCP layer presents its
+    result (see this module's own docstring for why `raise` can't do this:
+    the SDK always prefixes a raised message with "Error executing tool
+    <name>: ").
+
+    `functools.wraps(method)` matters here beyond cosmetics: the MCP SDK
+    builds each tool's input JSON schema from `inspect.signature(fn)`, and
+    `inspect.signature` follows a wrapper's `__wrapped__` attribute (which
+    `wraps` sets) back to the original method — so the schema the client
+    sees still matches `device_id`/`metric`/`hours`/etc. exactly, not a
+    bare `(*args, **kwargs)`. Verified by actually calling `list_tools()`
+    against a wrapped method before relying on this, not assumed."""
+
+    @functools.wraps(method)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        result = method(*args, **kwargs)
+        if isinstance(result, dict) and "error" in result:
+            return CallToolResult(content=[TextContent(type="text", text=result["error"])], isError=True)
+        return result
+
+    return wrapper
+
+
+# ---- 【2-1b】依照 TOOL_SCHEMAS 的名稱/說明文字,把 tools 身上對應的方法逐一註冊進去 ----
 def build_mcp_server(tools: AskTools) -> MCPServer:
     """Register every AskTools method named in TOOL_SCHEMAS as an MCP tool.
     Reuses TOOL_SCHEMAS' own name/description strings (the same ones
@@ -96,11 +155,17 @@ def build_mcp_server(tools: AskTools) -> MCPServer:
     maintaining a second, possibly-drifting description here. The JSON
     input schema itself comes from each method's own Python type hints —
     the MCP SDK builds it automatically, same as it already does for the
-    `@server.tool()` decorator form."""
+    `@server.tool()` decorator form. Every tool gets the same read-only
+    annotations (`_READ_ONLY_TOOL_ANNOTATIONS`) — true of all 7 alike."""
     server = MCPServer(name="aiot-aquaponics", version="1.0")
     for schema in TOOL_SCHEMAS:
         name = schema["name"]
-        server.add_tool(getattr(tools, name), name=name, description=schema["description"])
+        server.add_tool(
+            _wrap_as_mcp_tool(getattr(tools, name)),
+            name=name,
+            description=schema["description"],
+            annotations=_READ_ONLY_TOOL_ANNOTATIONS,
+        )
     return server
 
 

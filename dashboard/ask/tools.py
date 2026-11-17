@@ -53,6 +53,14 @@ DEFAULT_ANOMALIES_LIMIT = 10
 # a threshold is actively tripped; 3000 leaves comfortable headroom over
 # that rate for the full 720h (30-day) window without a second round trip.
 ANOMALY_FETCH_CAP = 3000
+# search_manual's minimum cosine similarity to treat a match_aqua_kb row as
+# actually relevant. Measured live against the real tools/kb_content.py
+# corpus (2026-11-18): genuinely matching questions scored 0.72-0.82;
+# clearly unrelated ones (e.g. "今天天氣如何") still came back with 5 rows
+# at 0.63-0.66 — match_aqua_kb has no WHERE clause of its own, it always
+# returns the closest `match_count` rows regardless of how far they are.
+# 0.70 sits in the gap between those two clusters.
+SIMILARITY_THRESHOLD = 0.70
 
 
 def _fmt_taipei(ts: Any) -> str | None:
@@ -371,7 +379,20 @@ class AskTools:
         back with zero results rather than calling `self._search_kb` at
         all — that callable does a real embedding API call plus a DB round
         trip, so an empty/pointless query is worth short-circuiting before
-        either."""
+        either.
+
+        Filters out anything below SIMILARITY_THRESHOLD: match_aqua_kb has
+        no WHERE clause of its own, it always returns the closest
+        `match_count` rows regardless of how unrelated they actually are
+        (see that constant's own comment for the measured scores this is
+        based on). A row with no similarity score at all (shouldn't happen
+        in practice — the SQL always computes one) is treated the same as
+        below-threshold, not let through unfiltered.
+
+        This one implementation backs both /ask's Gemini agent and the MCP
+        server's `search_manual` tool (mcp_server.py) — filtering here
+        keeps both call sites' behaviour identical by construction, not by
+        duplicated logic that could drift apart."""
         query = (query or "").strip()[:300]
         if not query:
             return {"rows": 0, "results": []}
@@ -380,10 +401,13 @@ class AskTools:
             {
                 "title": r.get("title"),
                 "content": r.get("content"),
-                "similarity": round(float(r["similarity"]), 3) if r.get("similarity") is not None else None,
+                "similarity": round(float(r["similarity"]), 3),
             }
             for r in rows
+            if r.get("similarity") is not None and r["similarity"] >= SIMILARITY_THRESHOLD
         ]
+        if not results:
+            return {"rows": 0, "results": [], "note": "知識庫沒有相關資訊"}
         return {"rows": len(results), "results": results}
 
 
@@ -495,7 +519,9 @@ TOOL_SCHEMAS: list[dict] = [
             "login lockout numbers are, a sensor's wiring, why a device shows offline, what the two "
             "forecast models are. Use this instead of every other tool here when the question is NOT "
             "asking for a live data value: the other tools can only report numbers from the database, "
-            "never explain how something works or how to configure it."
+            "never explain how something works or how to configure it. Answer only from what this "
+            "tool actually returns — if it reports no relevant results, say plainly that the knowledge "
+            "base has nothing on this, don't fill the gap yourself."
         ),
         "parameters": {
             "type": "object",
