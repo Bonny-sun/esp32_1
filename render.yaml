@@ -82,3 +82,10 @@ services:
         sync: false
       - key: GEMINI_MODEL
         sync: false
+      # Optional MCP server at /mcp, mounted on this same service (no extra
+      # cost). Leave MCP_API_KEY unset to keep /mcp unmounted entirely, same
+      # "missing secret = feature off" pattern as GEMINI_API_KEY above.
+      - key: MCP_API_KEY
+        sync: false
+      - key: MCP_ALLOWED_HOSTS
+        sync: false

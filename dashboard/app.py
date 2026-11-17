@@ -41,6 +41,7 @@ import pandas as pd
 from ask.agent import DEFAULT_MODEL, MAX_QUESTION_CHARS, GeminiLLMClient, RateLimiter, answer_question
 from ask.tools import AskTools
 from auth import LoginLockout, check_password
+from mcp_server import build_mcp_asgi_app, build_mcp_server, start_mcp_session, stop_mcp_session
 from nicegui import app, run, ui
 from supabase import create_client
 
@@ -1654,6 +1655,30 @@ _ask_tools = AskTools(
     load_all_latest=load_all_latest,
     search_kb=search_kb,
 )
+
+# ---------------------------------------------------------------- MCP server
+# Exposes the same _ask_tools (above) over the Model Context Protocol, so
+# any MCP client (Claude Desktop, Claude Code, ...) can query this system's
+# live data directly — not only through /ask's Gemini agent. Off unless
+# MCP_API_KEY is set, same "missing secret = feature off" pattern as
+# GEMINI_API_KEY/LINE_CHANNEL_TOKEN elsewhere in this project. Mounted on
+# this same NiceGUI service (no new Render service, no new cost) — see
+# mcp_server.py's own docstring for why it needs app.on_startup/on_shutdown
+# wired in, not just app.mount() on its own.
+MCP_API_KEY = os.environ.get("MCP_API_KEY", "")
+if MCP_API_KEY:
+    _mcp_allowed_hosts = [
+        h.strip()
+        for h in os.environ.get(
+            "MCP_ALLOWED_HOSTS",
+            os.environ.get("RENDER_EXTERNAL_HOSTNAME", "localhost,127.0.0.1"),
+        ).split(",")
+        if h.strip()
+    ]
+    _mcp_server = build_mcp_server(_ask_tools)
+    app.mount("/mcp", build_mcp_asgi_app(_mcp_server, api_key=MCP_API_KEY, allowed_hosts=_mcp_allowed_hosts))
+    app.on_startup(lambda: start_mcp_session(_mcp_server))
+    app.on_shutdown(stop_mcp_session)
 
 
 def _browser_identity() -> str:

@@ -12,3 +12,7 @@ bcrypt>=4.0
 certifi>=2026.10.19
 # /ask page: official Gemini Python SDK (not the deprecated google-generativeai).
 google-genai>=1.0
+# mcp_server.py: official MCP SDK. >=2.0 specifically — 1.x's FastMCP was
+# renamed to MCPServer (mcp.server.mcpserver) in 2.0, a real API break, not
+# just new features; mcp_server.py uses the 2.x shape throughout.
+mcp>=2.0

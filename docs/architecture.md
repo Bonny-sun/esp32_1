@@ -1516,3 +1516,56 @@ exact version in code would have gone stale before merge.
   questions and assert on the row *count*, not just that an answer came
   back; and when a database is fixed by hand, fix the migration file in the
   same change so re-running it can't undo the fix.
+* **2026-11-17 (later still) — Added an MCP server at `/mcp`.** Motivated
+  by job postings listing MCP as a desired skill. `dashboard/mcp_server.py`
+  wraps the exact same `AskTools` instance `/ask` already uses as one MCP
+  tool per `ask/tools.py` `TOOL_SCHEMAS` entry (`build_mcp_server()` reuses
+  those names/descriptions directly — one source of truth, not a second
+  hand-written copy that could drift). Mounted on the *same* NiceGUI/Render
+  service via `app.mount("/mcp", ...)` — explicitly chosen over a second
+  Render service to add $0 to the deploy cost; MCP serving itself makes no
+  LLM API calls either (it just returns tool results over a standard
+  protocol — whichever client connects brings its own model/key), so this
+  adds nothing to the Gemini bill either.
+
+  Used the official `mcp` SDK, pinned `>=2.0` after discovering mid-build
+  that `pip install mcp` installs 2.x by default and 1.x's `FastMCP` class
+  was renamed to `MCPServer` (`mcp.server.mcpserver`) — a real API break,
+  not just new features; the error message on `import
+  mcp.server.fastmcp` names the exact migration guide. Checked this live
+  (installed the package, inspected `MCPServer`'s actual signatures) rather
+  than coding from memory, same discipline as the earlier Gemini-model and
+  Gemini-embedding work — training-data knowledge of fast-moving SDKs goes
+  stale within months.
+
+  Two non-obvious integration bugs, found only by driving a real MCP
+  `initialize` → `tools/list` → `tools/call` sequence over
+  `httpx.ASGITransport` before writing any application code, not by reading
+  the SDK's docs:
+  1. `app.mount()`-ing `MCPServer.streamable_http_app()` does **not**
+     propagate that sub-app's lifespan into the parent app (Starlette
+     `Mount` doesn't auto-chain lifespans) — every real request 500'd with
+     "Task group is not initialized. Make sure to use run()." until the
+     session manager's lifecycle was entered/exited by hand via
+     `start_mcp_session()`/`stop_mcp_session()`, wired into NiceGUI's own
+     `app.on_startup`/`app.on_shutdown` (the same hook `_warm_cache_loop`
+     already uses).
+  2. The MCP SDK's own DNS-rebinding protection rejects any request whose
+     `Host` header isn't on an explicit allowlist (421 "Invalid Host
+     header") — `MCP_ALLOWED_HOSTS` defaults to Render's own
+     `RENDER_EXTERNAL_HOSTNAME` (set automatically, no manual Render config
+     needed) or `localhost,127.0.0.1` locally, independent of the API-key
+     check below.
+
+  Auth: a fixed bearer token (`MCP_API_KEY`, compared by a small
+  `RequireApiKey` ASGI middleware wrapping the mounted sub-app) rather than
+  MCP's spec-recommended OAuth 2.1 — same env-var-shared-secret pattern as
+  `GEMINI_API_KEY`/`DASH_PASSWORD_HASH` elsewhere in this project. A real
+  multi-tenant product would want OAuth; a single-reader portfolio demo
+  doesn't need that infrastructure. `MCP_API_KEY` unset → `/mcp` isn't
+  mounted at all, same "missing secret = feature off" pattern as
+  `GEMINI_API_KEY`. 8 new tests (`tests/test_mcp_server.py`): tool
+  registration/description parity with `TOOL_SCHEMAS`, a real dispatch
+  check (not just registration), `RequireApiKey`'s four cases, and one
+  full protocol round-trip over `httpx.ASGITransport` that would have
+  caught either integration bug above. 140/140 total, ruff clean.

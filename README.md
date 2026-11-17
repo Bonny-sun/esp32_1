@@ -208,6 +208,29 @@ device names — never a raw DB row or an unbounded block of text). The flow:
 Every answer ends with a one-line "資料來源" note (which tool, which device,
 which time range) so it can be checked against the dashboard's own pages.
 
+### MCP server
+
+The same `AskTools` instance `/ask` uses is also exposed as an
+[MCP](https://modelcontextprotocol.io) server at `/mcp` — so any MCP client
+(Claude Desktop, Claude Code, ...) can call `list_devices`/`get_stats`/
+`search_manual`/etc. directly, without going through Gemini at all.
+`dashboard/mcp_server.py` registers one MCP tool per entry in
+`ask/tools.py`'s `TOOL_SCHEMAS` (same name, same description Gemini sees —
+one source of truth, not a second hand-maintained copy), using the official
+`mcp` SDK (`mcp>=2.0` — 1.x's `FastMCP` was renamed `MCPServer` in 2.0, a
+real API break). Mounted on this *same* NiceGUI/Render service via
+`app.mount("/mcp", ...)`: no second service, no extra Render cost. Auth is a
+fixed bearer token (`MCP_API_KEY`, checked by a small ASGI middleware), not
+MCP's own OAuth machinery — this is a single-reader portfolio demo, not a
+multi-tenant product, so a shared-secret header (the same pattern
+`GEMINI_API_KEY`/`DASH_PASSWORD_HASH` already use) is proportionate; OAuth's
+infrastructure cost isn't worth it here. One real gotcha, documented in
+`mcp_server.py`'s own docstring: mounting `MCPServer.streamable_http_app()`
+via `app.mount()` does **not** auto-run its lifespan — without manually
+entering/exiting `session_manager.run()` from NiceGUI's own
+`app.on_startup`/`app.on_shutdown`, every real request 500s with "Task group
+is not initialized".
+
 ### Environment variables
 
 | Variable | Required | Notes |
@@ -216,6 +239,8 @@ which time range) so it can be checked against the dashboard's own pages.
 | `GEMINI_MODEL` | no | a specific stable model id, e.g. `gemini-3.8-flash`. The Gemini model lineup changes often and old models get shut down — check [the model list](https://ai.google.dev/gemini-api/docs/models) and [deprecations](https://ai.google.dev/gemini-api/docs/deprecations) rather than assuming a name is still current; a "...-latest" rolling alias looked appealing to dodge that, but it broke `/ask` in production once the model it pointed to was shut down (2026-11), so this project now pins a specific stable id instead. Falls back to a code-level default if unset. |
 | `ASK_RATE_PER_MINUTE` / `ASK_RATE_PER_DAY` / `ASK_RATE_SITE_PER_DAY` | no | abuse/cost guard: per-visitor and site-wide question caps (sane built-in defaults). In-memory counters — **reset on every restart/redeploy**, which is an accepted tradeoff for a single-instance demo site, not a design for a real multi-tenant product. |
 | `ASK_REQUIRE_AUTH` | no | `true` makes `/ask` require the same `DASH_USERNAME`/`DASH_PASSWORD_HASH` login as `/admin`. Defaults to `false` (open), matching this being a public portfolio demo. |
+| `MCP_API_KEY` | to enable `/mcp` | any long random string; clients send it as `Authorization: Bearer <value>`. Unset → `/mcp` isn't mounted at all. |
+| `MCP_ALLOWED_HOSTS` | no | comma-separated hostnames `/mcp` may be reached at (MCP's own DNS-rebinding guard — independent of `MCP_API_KEY`). Defaults to Render's own `RENDER_EXTERNAL_HOSTNAME` (set automatically on Render) or `localhost,127.0.0.1` locally. |
 
 ### Local run
 
