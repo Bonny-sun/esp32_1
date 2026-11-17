@@ -161,10 +161,30 @@ get_daily_stats(device_id, metric, days)            — avg/max/min + when, ONE 
 get_anomalies(device_id=None, hours=None, limit)    — flagged anomalies, optionally
                                                         within the last N hours
 get_forecast(device_id)                             — latest forecast per (metric, model)
+search_manual(query)                                — RAG lookup over a FAQ/manual
+                                                        knowledge base, for "how do I.../
+                                                        how is...configured" questions
 ```
 
 (`hours` up to 720 / `days` up to 30 — a month — matching the dashboard's own
 longest history view.)
+
+**`search_manual` — RAG, not another data query.** Every tool above answers
+"what's the current/past value" by querying live tables. Questions like "how
+do I reset Wi-Fi" or "what are the login lockout numbers" have no table to
+query — they're answered from a small hand-written FAQ/manual corpus
+(`tools/kb_content.py`, ~15-20 entries) embedded with Gemini's
+`gemini-embedding-2` and stored in Supabase as `pgvector` columns
+(`sql/11_knowledge_base.sql`). `search_manual` embeds the user's question
+(asymmetric "task: search result | query: ..." prefix, matching the
+corpus's own "title: ... | text: ..." prefix — `gemini-embedding-2` has no
+`task_type` config field, so the task has to be written into the text
+itself) and returns the closest entries via a `match_aqua_kb` Postgres
+function (cosine distance). `aqua_kb` has its own anon-readable RLS
+policy — unlike `aqua_auth_log`, this is public FAQ text, nothing sensitive.
+Re-embedding is a one-off, run-by-hand step
+(`python3 tools/build_kb_embeddings.py`) whenever the FAQ content changes,
+not something the deployed app ever does itself.
 
 Text-to-SQL (letting the model write its own queries) is more flexible, but
 for a small, fixed data model the flexibility buys little while adding real

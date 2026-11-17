@@ -19,13 +19,14 @@ DEVICES = [
 ]
 
 
-def make_tools(*, history=None, anomalies=None, forecasts=None, latest=None) -> AskTools:
+def make_tools(*, history=None, anomalies=None, forecasts=None, latest=None, search_kb=None) -> AskTools:
     return AskTools(
         load_devices=lambda: DEVICES,
         load_history=history or (lambda device_id, hours: pd.DataFrame()),
         load_anomalies=anomalies or (lambda device_id, limit: pd.DataFrame()),
         load_forecasts=forecasts or (lambda device_id: pd.DataFrame()),
         load_all_latest=latest or (lambda: {}),
+        search_kb=search_kb or (lambda query: []),
     )
 
 
@@ -430,3 +431,52 @@ def test_get_daily_stats_hourly_window_missing_columns_reports_zero_rows():
     tools = make_tools(history=lambda d, h: df)
     out = tools.get_daily_stats("esp32-aqua-01", "temperature", 10)
     assert out["rows"] == 0
+
+
+# ---------------------------------------------------------------- search_manual
+
+def test_search_manual_empty_query_short_circuits_without_calling_search_kb():
+    """An empty/pointless query shouldn't trigger a real embedding API call
+    plus DB round trip (what `search_kb` actually is in production) — it
+    should never even be called."""
+    def boom(query):
+        raise AssertionError("search_kb should not be called for an empty query")
+
+    tools = make_tools(search_kb=boom)
+    assert tools.search_manual("") == {"rows": 0, "results": []}
+    assert tools.search_manual("   ") == {"rows": 0, "results": []}
+
+
+def test_search_manual_passes_through_and_formats_results():
+    captured = {}
+
+    def search_kb(query):
+        captured["query"] = query
+        return [
+            {"title": "重新設定 Wi-Fi", "content": "按住 BOOT 鍵...", "similarity": 0.91234},
+            {"title": "OLED 故障排除", "content": "檢查排線...", "similarity": 0.5},
+        ]
+
+    tools = make_tools(search_kb=search_kb)
+    out = tools.search_manual("怎麼重設網路")
+
+    assert captured["query"] == "怎麼重設網路"
+    assert out["rows"] == 2
+    assert out["results"][0] == {"title": "重新設定 Wi-Fi", "content": "按住 BOOT 鍵...", "similarity": 0.912}
+
+
+def test_search_manual_truncates_an_overlong_query():
+    captured = {}
+
+    def search_kb(query):
+        captured["query"] = query
+        return []
+
+    tools = make_tools(search_kb=search_kb)
+    tools.search_manual("問" * 1000)
+    assert len(captured["query"]) == 300
+
+
+def test_search_manual_no_results_reports_zero_rows():
+    tools = make_tools(search_kb=lambda query: [])
+    assert tools.search_manual("找不到的問題") == {"rows": 0, "results": []}

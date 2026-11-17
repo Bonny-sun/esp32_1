@@ -1616,13 +1616,6 @@ GEMINI_MODEL = os.environ.get("GEMINI_MODEL") or DEFAULT_MODEL
 ASK_REQUIRE_AUTH = os.environ.get("ASK_REQUIRE_AUTH", "false").strip().lower() == "true"
 ASK_ENABLED = bool(GEMINI_API_KEY)
 
-_ask_tools = AskTools(
-    load_devices=load_devices,
-    load_history=load_history,
-    load_anomalies=load_anomalies,
-    load_forecasts=load_forecasts,
-    load_all_latest=load_all_latest,
-)
 _ask_rate_limiter = RateLimiter()
 _login_lockout = LoginLockout()
 _ask_llm: GeminiLLMClient | None = None  # lazy: only built on the first real
@@ -1636,6 +1629,31 @@ def _get_ask_llm() -> GeminiLLMClient:
     if _ask_llm is None:
         _ask_llm = GeminiLLMClient(api_key=GEMINI_API_KEY, model=GEMINI_MODEL)
     return _ask_llm
+
+
+def search_kb(query: str) -> list[dict]:
+    """RAG retrieval for search_manual (ask/tools.py). Embeds `query` with
+    the asymmetric "search result" task prefix — see GeminiLLMClient.embed's
+    own docstring for why this exact prefix has to match
+    tools/build_kb_embeddings.py's document-side "title: ... | text: ..."
+    prefix — then returns the closest FAQ/manual entries via the
+    match_aqua_kb Postgres function (pgvector cosine distance).
+
+    sb_read() (anon key) is safe here, unlike load_all_latest(): aqua_kb has
+    its own anon SELECT policy (sql/11_knowledge_base.sql) since this is
+    public FAQ content, not sensitive."""
+    vector = _get_ask_llm().embed(f"task: search result | query: {query}")
+    return sb_read().rpc("match_aqua_kb", {"query_embedding": vector, "match_count": 5}).execute().data
+
+
+_ask_tools = AskTools(
+    load_devices=load_devices,
+    load_history=load_history,
+    load_anomalies=load_anomalies,
+    load_forecasts=load_forecasts,
+    load_all_latest=load_all_latest,
+    search_kb=search_kb,
+)
 
 
 def _browser_identity() -> str:

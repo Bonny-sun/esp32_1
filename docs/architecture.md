@@ -1440,3 +1440,42 @@ exact version in code would have gone stale before merge.
   updated with the same guidance. No test changes: the model string itself
   is never exercised against the real API in `tests/test_ask_agent.py`
   (all mocked/scripted), so nothing there needed updating.
+* **2026-11-17 — `/ask` gains RAG (`search_manual`).** Motivated by job
+  postings listing RAG as a desired skill; designed as a genuine addition,
+  not a resume-padding stub — it fills a real gap, since every existing
+  tool only ever answers "what's the current/past value", and has nothing
+  to say to "how do I reset Wi-Fi" or "what are the lockout numbers".
+  Built as one more tool on the existing Tool Calling agent rather than a
+  separate feature: `search_manual(query)` embeds the question (Gemini
+  `gemini-embedding-2`, 768 dims — its own "recommended" tier, plenty for
+  a few dozen short entries) and returns the closest matches from a new
+  `aqua_kb` table (`sql/11_knowledge_base.sql`, `pgvector`, cosine
+  distance via a `match_aqua_kb()` Postgres function — supabase-py's query
+  builder has no "order by vector distance" method of its own, so this is
+  the standard Supabase+pgvector shape). `gemini-embedding-2` has no
+  `task_type` config field (unlike the older `gemini-embedding-001`) —
+  Google's docs say to write the task into the text itself instead, so
+  `tools/build_kb_embeddings.py` prefixes every corpus entry with
+  `title: ... | text: ...` and `app.py`'s `search_kb()` prefixes the
+  query with `task: search result | query: ...`; the two have to agree or
+  retrieval quality degrades silently, with no error to catch it.
+  `aqua_kb` gets a real anon SELECT policy (unlike `aqua_auth_log`) — this
+  is public FAQ text, nothing sensitive. FAQ content itself
+  (`tools/kb_content.py`, 17 entries) is hand-written from verified facts
+  already established elsewhere in this codebase/log (wiring, WiFiManager's
+  BOOT-button reset, the 300s offline threshold, lockout numbers, the two
+  forecast models, ...), not generated from scratch — same standard this
+  project has held content to since the auth-log overclaim incident.
+  Embedding is a one-off, run-by-hand script
+  (`tools/build_kb_embeddings.py`), never something the deployed app does
+  itself — re-run it only when the FAQ content changes. Cost impact checked
+  against Gemini's own pricing page before building: embedding has a free
+  tier (text input), and even on the paid tier is $0.20/1M tokens — the
+  one-time corpus embedding and each question's own query embedding both
+  round to a fraction of a cent. No new pip dependency (reuses `google-genai`
+  and `supabase`, both already present). Tests cover `GeminiLLMClient.embed()`
+  (mocked SDK call, confirms model/dimension/plain-list-of-floats shape) and
+  `AskTools.search_manual()` (empty-query short-circuit before the real
+  embedding+DB call, result formatting, query-length clamp) — `search_kb()`
+  itself (app.py) stays untested directly, consistent with this project's
+  existing rule that `dashboard/app.py` is never imported in tests.

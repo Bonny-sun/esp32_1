@@ -16,15 +16,20 @@
   二、資料格式          【2-1】ToolCall 工具呼叫  【2-2】ModelTurn 模型的一次回應  【2-3】LLMClient 介面
   三、問答主流程        【3-1】執行工具（出錯也不當機）  【3-2】問答迴圈 answer_question
   四、Gemini 實作       【4-1】建立連線與工具清單  【4-2】問一次  【4-3】失敗自動重試  【4-4】轉成 Gemini 格式
+                        【4-5】embed() 文字轉向量，給 search_manual (RAG) 用
   五、提問次數限制      【5-1】次數上限設定  【5-2】建立限流器  【5-3】檢查能不能問  【5-4】記錄一次提問
 
 備註：
   改 AI 的角色與回答規則 ....... 【1-3】SYSTEM_PROMPT
   改用哪個 Gemini 模型 ......... 【1-2】的 DEFAULT_MODEL
+  改用哪個 Embedding 模型 ...... 【1-2】的 EMBEDDING_MODEL/EMBEDDING_DIM（改 DIM 要連動改
+                                sql/11_knowledge_base.sql 的 vector(768) 欄位）
   改最多問幾輪、問題最長幾字 ... 【1-1】
   改逾時秒數、重試次數 ......... 【1-2】
   改提問次數上限 ............... 【5-1】（也可用環境變數 ASK_RATE_PER_MINUTE、ASK_RATE_PER_DAY、ASK_RATE_SITE_PER_DAY）
   新增一個 AI 能查的工具 ....... 在 tools.py 新增，這支程式不用改
+  FAQ／操作手冊知識庫內容 ...... tools/kb_content.py（改完要重跑一次
+                                tools/build_kb_embeddings.py 才會生效）
   名詞：LLM = 大型語言模型（如 Gemini）
         工具呼叫(tool calling) = AI 自己判斷「我需要查哪筆資料」，由程式代它去查，再把結果交還給它
         Protocol = 一份「長什麼樣子才算 LLMClient」的規格，測試時可以換成假的 AI
@@ -88,6 +93,13 @@ DEFAULT_MODEL = "gemini-3.8-flash"  # the current (2026-11) recommended
 # was shut down 2026-06-01 — so "latest" only avoided staleness as long as
 # someone was watching to catch a shutdown before the alias itself broke.
 # GEMINI_MODEL always wins when set, this is only the fallback if it's unset.
+# Embedding model for search_manual (RAG over the FAQ/manual knowledge base,
+# tools.py) — separate from DEFAULT_MODEL, which only ever does text
+# generation. 768 dims: gemini-embedding-2's own "recommended" tier
+# (128-3072 range), plenty for a few dozen short FAQ entries; must match
+# sql/11_knowledge_base.sql's vector(768) column exactly.
+EMBEDDING_MODEL = "gemini-embedding-2"
+EMBEDDING_DIM = 768
 DEFAULT_MAX_OUTPUT_TOKENS = 1024
 # Per-call HTTP timeout for a single generate_content request (one round of
 # the agent loop, not the whole question). 20s was too tight in practice —
@@ -115,10 +127,14 @@ SYSTEM_PROMPT = (
     "你是一個 AIoT 溫溼度監測系統的資料助理。你只能透過提供的工具查詢資料,"
     "絕對不能自己編造數值或引用工具結果以外的資訊。如果工具回傳查無資料,"
     "就明確告訴使用者「查無資料」,不要用猜測的數字回答。"
-    "只回答跟這個系統的感測資料、異常警戒、AI預測有關的問題;"
-    "跟系統資料無關的問題,禮貌說明你只能回答系統相關的問題並拒絕回答。"
+    "遇到問即時數據、異常警戒、AI預測的問題,用對應的查詢工具;"
+    "遇到問「怎麼用、怎麼設定、故障排除」這類操作類問題(例如怎麼重設 Wi-Fi、"
+    "登入鎖定規則、感測器接線),改用 search_manual 工具查 FAQ 知識庫,"
+    "不要套用查數據工具的答案去回答這類問題。"
+    "跟這個系統完全無關的問題,禮貌說明你只能回答系統相關的問題並拒絕回答。"
     "回答一律使用繁體中文,簡短清楚,並在最後附上一行「資料來源」,"
-    "簡述你查詢了哪個工具、哪個裝置、哪段時間範圍,方便使用者自行驗證。"
+    "簡述你查詢了哪個工具(例如 search_manual 的哪一筆 FAQ,或哪個裝置、哪段時間範圍的數據),"
+    "方便使用者自行驗證。"
 )
 
 
@@ -315,6 +331,27 @@ class GeminiLLMClient:
             part = types.Part.from_function_response(name=message["name"], response={"result": message["result"]})
             return types.Content(role="user", parts=[part])
         raise ValueError(f"unknown message role {role!r}")
+
+    # ---- 【4-5】文字轉向量：search_manual (RAG) 用，不是給一般問答流程呼叫的 ----
+    def embed(self, text: str) -> list[float]:
+        """Embed `text` with EMBEDDING_MODEL, returning a plain list of
+        EMBEDDING_DIM floats ready to hand to Supabase's pgvector column/RPC
+        call — never a raw SDK object, so tools.py/app.py never need to know
+        anything about google-genai's own types.
+
+        Caller decides the task-instruction prefix (gemini-embedding-2 has
+        no task_type config field — the task has to be written into the
+        text itself, per Google's own docs): build_kb_embeddings.py prefixes
+        corpus entries with "title: ... | text: ...", app.py's search_kb()
+        prefixes a user's question with "task: search result | query: ...".
+        Mismatching the two formats would silently hurt retrieval quality
+        without raising any error, so both call sites must agree on this."""
+        result = self._client.models.embed_content(
+            model=EMBEDDING_MODEL,
+            contents=text,
+            config=self._types.EmbedContentConfig(output_dimensionality=EMBEDDING_DIM),
+        )
+        return list(result.embeddings[0].values)
 
 
 # ============================================================================

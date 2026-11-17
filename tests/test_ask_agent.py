@@ -24,6 +24,7 @@ def make_tools() -> AskTools:
         load_anomalies=lambda d, limit: pd.DataFrame(),
         load_forecasts=lambda d: pd.DataFrame(),
         load_all_latest=lambda: latest,
+        search_kb=lambda query: [],
     )
 
 
@@ -102,6 +103,7 @@ def test_tool_raising_exception_is_reported_not_propagated():
         load_anomalies=lambda d, limit: pd.DataFrame(),
         load_forecasts=lambda d: pd.DataFrame(),
         load_all_latest=boom_loader,
+        search_kb=lambda query: [],
     )
     llm = ScriptedLLM(
         [
@@ -138,6 +140,35 @@ def test_gemini_client_builds_tool_declarations_from_all_schemas():
     client = GeminiLLMClient(api_key="unit-test-key-not-a-real-credential", model="gemini-flash-latest")
     declared = client._config.tools[0].function_declarations
     assert {d.name for d in declared} == {s["name"] for s in TOOL_SCHEMAS}
+
+
+def test_embed_returns_a_plain_list_of_floats_with_the_right_dimension(monkeypatch):
+    """search_kb() (app.py) hands this straight to Supabase's pgvector RPC
+    call, which needs a plain JSON-serializable list — never a raw SDK
+    object — and the length must match EMBEDDING_DIM / sql/
+    11_knowledge_base.sql's vector(768) column exactly."""
+    import ask.agent as agent_module
+
+    client = GeminiLLMClient(api_key="unit-test-key-not-a-real-credential", model="gemini-flash-latest")
+    captured = {}
+
+    def fake_embed_content(**kwargs):
+        import types
+
+        captured.update(kwargs)
+        fake_values = [0.1] * agent_module.EMBEDDING_DIM
+        embedding = types.SimpleNamespace(values=fake_values)
+        return types.SimpleNamespace(embeddings=[embedding])
+
+    monkeypatch.setattr(client._client.models, "embed_content", fake_embed_content)
+
+    vector = client.embed("task: search result | query: 怎麼重設 Wi-Fi")
+
+    assert isinstance(vector, list)
+    assert len(vector) == agent_module.EMBEDDING_DIM
+    assert all(isinstance(v, float) for v in vector)
+    assert captured["model"] == agent_module.EMBEDDING_MODEL
+    assert captured["config"].output_dimensionality == agent_module.EMBEDDING_DIM
 
 
 def test_answer_question_threads_raw_through_to_the_model_message():
