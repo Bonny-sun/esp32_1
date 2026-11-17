@@ -1569,3 +1569,18 @@ exact version in code would have gone stale before merge.
   check (not just registration), `RequireApiKey`'s four cases, and one
   full protocol round-trip over `httpx.ASGITransport` that would have
   caught either integration bug above. 140/140 total, ruff clean.
+* **2026-11-17 (later still) — MCP server verified live.** Set `MCP_API_KEY`
+  in Render, redeployed, confirmed `/mcp` requires it (an unauthenticated
+  `curl -X POST .../mcp/` returned `401 Unauthorized` — proves both that the
+  route is actually mounted and that the auth gate is live, since a missing
+  `MCP_API_KEY` would instead leave `/mcp` unmounted entirely, a 404). Then
+  tested with a real third-party MCP client (not this session's own
+  protocol-level test): `get_latest` returned both devices' real current
+  readings; `search_manual` correctly answered "如何重設wifi" from
+  `tools/kb_content.py`'s FAQ entry, matching the firmware's actual
+  BOOT-button captive-portal flow; a combined "異常+預測" question chained
+  3 tool calls (`get_anomalies` twice, `get_forecast`) and noticed on its
+  own that `esp32-aqua-02`'s humidity reading was higher than
+  `esp32-aqua-01`'s flagged one without itself being flagged — a real
+  multi-tool reasoning result, not a canned response. Closes the one
+  unchecked item in PR #202's test plan.
