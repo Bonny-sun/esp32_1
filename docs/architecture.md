@@ -1489,3 +1489,21 @@ exact version in code would have gone stale before merge.
   answered correctly from the knowledge base with a 資料來源 line naming
   `search_manual`, and the pre-existing data tools were unaffected. Closes
   the one unchecked item in PR #198's test plan.
+* **2026-11-17 (later still) — Dropped the `aqua_kb` ivfflat index.** Calling
+  `match_aqua_kb()` directly with varied phrasings (rather than the
+  FAQ-title-shaped questions used above) showed it returning 0 or 1 rows
+  instead of 5 for several questions, e.g. 「裝置多久傳一次資料」 found nothing
+  even though 「裝置多久上傳一次資料」 is an entry. Cause: `sql/11`'s
+  `ivfflat (lists = 10)` index on a 17-row table — ivfflat searches only
+  `ivfflat.probes` (default 1) of its lists, and with this few rows most
+  lists are empty or hold a single row, so the true nearest neighbour is
+  often in a list that never gets searched. Fix: `drop index
+  aqua_kb_embedding_idx` (run once in the Supabase SQL editor); after it, 6/6
+  test questions returned 5 rows with the right entry first. For a table
+  this small an exact sequential scan is both correct and instant, so
+  `sql/11_knowledge_base.sql` no longer creates the index and instead drops
+  it if present, which keeps the migration safe to re-run (re-running the old
+  version would have silently brought the bug back). Re-add an index only if
+  the table reaches hundreds of rows, with `lists` and `ivfflat.probes`
+  re-tuned. **Lesson:** retrieval checks should use paraphrased questions and
+  assert on the row *count*, not just that an answer came back.
