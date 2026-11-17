@@ -1505,6 +1505,14 @@ exact version in code would have gone stale before merge.
   it if present, which keeps the migration safe to re-run (re-running the old
   version would have silently brought the bug back). Re-add an index only if
   the table reaches hundreds of rows, with `lists` and `ivfflat.probes`
-  re-tuned. **Lesson:** retrieval checks should use paraphrased questions and
-  assert on the row *count*, not just that an answer came back. Full
-  write-up: `docs/incidents/2026-11-kb-ivfflat-index.md`.
+  re-tuned. Other failing examples: 「螢幕沒有顯示怎麼辦」 returned 1 row,
+  「登入被鎖住」 returned 0. Why the earlier live check missed it (inferred,
+  not verified): it used FAQ-title-shaped questions that happened to land in
+  a searched list, and it judged "did the AI answer" rather than counting
+  rows — the AI can paper over a miss. Likely contributing factor: the
+  migration built the index on an empty table, and ivfflat computes its list
+  centres at index-build time, so they never reflected the FAQ vectors
+  loaded afterwards. **Lesson:** retrieval checks should use paraphrased
+  questions and assert on the row *count*, not just that an answer came
+  back; and when a database is fixed by hand, fix the migration file in the
+  same change so re-running it can't undo the fix.
