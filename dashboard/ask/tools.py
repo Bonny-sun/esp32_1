@@ -30,6 +30,7 @@ possibly hallucinate around).
     get_daily_stats — 某裝置某指標近 N 天的每日統計
     get_anomalies   — 查異常警戒紀錄
     get_forecast    — 查 AI 預測結果
+    search_manual   — 查 FAQ／操作手冊知識庫（RAG），答「怎麼用、怎麼設定、故障排除」這類問題
 """
 from __future__ import annotations
 
@@ -99,12 +100,14 @@ class AskTools:
         load_anomalies: Callable[[str | None, int], pd.DataFrame],
         load_forecasts: Callable[[str], pd.DataFrame],
         load_all_latest: Callable[[], dict],
+        search_kb: Callable[[str], list[dict]],
     ) -> None:
         self._load_devices = load_devices
         self._load_history = load_history
         self._load_anomalies = load_anomalies
         self._load_forecasts = load_forecasts
         self._load_all_latest = load_all_latest
+        self._search_kb = search_kb
 
     def _device_ids(self) -> set[str]:
         return {d["device_id"] for d in self._load_devices()}
@@ -360,6 +363,29 @@ class AskTools:
         ]
         return {"rows": len(rows), "device_id": device_id, "forecasts": rows}
 
+    def search_manual(self, query: str) -> dict:
+        """RAG over the FAQ／操作手冊 knowledge base (sql/11_knowledge_base.sql)
+        — for "how do I .../ how is ... configured / what do I do when ..."
+        questions, which every other tool here (pure data queries) cannot
+        answer. Never raises for a bad argument: an empty query just comes
+        back with zero results rather than calling `self._search_kb` at
+        all — that callable does a real embedding API call plus a DB round
+        trip, so an empty/pointless query is worth short-circuiting before
+        either."""
+        query = (query or "").strip()[:300]
+        if not query:
+            return {"rows": 0, "results": []}
+        rows = self._search_kb(query)
+        results = [
+            {
+                "title": r.get("title"),
+                "content": r.get("content"),
+                "similarity": round(float(r["similarity"]), 3) if r.get("similarity") is not None else None,
+            }
+            for r in rows
+        ]
+        return {"rows": len(results), "results": results}
+
 
 # ---------------------------------------------------------------- schemas
 # Plain JSON Schema (OpenAPI-3.0-shaped), handed to the Gemini SDK via
@@ -459,6 +485,24 @@ TOOL_SCHEMAS: list[dict] = [
             "type": "object",
             "properties": {"device_id": _DEVICE_ID_REQUIRED},
             "required": ["device_id"],
+        },
+    },
+    {
+        "name": "search_manual",
+        "description": (
+            "Search the FAQ / operating manual knowledge base for how-to, configuration, or "
+            "troubleshooting questions about this system itself — e.g. how to reset Wi-Fi, what the "
+            "login lockout numbers are, a sensor's wiring, why a device shows offline, what the two "
+            "forecast models are. Use this instead of every other tool here when the question is NOT "
+            "asking for a live data value: the other tools can only report numbers from the database, "
+            "never explain how something works or how to configure it."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "The user's question, in their own words."},
+            },
+            "required": ["query"],
         },
     },
 ]
