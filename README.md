@@ -180,7 +180,10 @@ query — they're answered from a small hand-written FAQ/manual corpus
 corpus's own "title: ... | text: ..." prefix — `gemini-embedding-2` has no
 `task_type` config field, so the task has to be written into the text
 itself) and returns the closest entries via a `match_aqua_kb` Postgres
-function (cosine distance). `aqua_kb` has its own anon-readable RLS
+function (cosine distance) — an exact scan, deliberately with no vector
+index: at this table size an `ivfflat` index made it miss entries (see the
+2026-11-17 decision-log entry in `docs/architecture.md`); only add one once
+the corpus reaches hundreds of rows. `aqua_kb` has its own anon-readable RLS
 policy — unlike `aqua_auth_log`, this is public FAQ text, nothing sensitive.
 Re-embedding is a one-off, run-by-hand step
 (`python3 tools/build_kb_embeddings.py`) whenever the FAQ content changes,

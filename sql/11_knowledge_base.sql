@@ -30,12 +30,17 @@ create table if not exists public.aqua_kb (
     created_at timestamptz not null default now()
 );
 
--- lists=10 is sized for a few dozen rows, not a large corpus — ivfflat's
--- own guidance is roughly sqrt(row_count) lists; re-tune if this table
--- ever grows past a few hundred rows. ANALYZE after bulk-loading rows
--- (tools/build_kb_embeddings.py's insert) so the planner has fresh stats.
-create index if not exists aqua_kb_embedding_idx
-    on public.aqua_kb using ivfflat (embedding vector_cosine_ops) with (lists = 10);
+-- Deliberately NO vector index. An earlier version of this file created an
+-- ivfflat index here (lists = 10); with only ~17 rows that index made
+-- match_aqua_kb() return 0-1 rows for many questions even though a matching
+-- FAQ entry existed (ivfflat searches just 1 of its 10 lists by default, and
+-- with this few rows most lists are empty). A plain sequential scan over a few
+-- dozen rows is exact and instant, so no index is needed.
+-- Only add one (and re-tune `lists`, roughly sqrt(row_count), and
+-- `ivfflat.probes`) if this table ever grows into the hundreds of rows or more.
+-- The drop below removes the index from a database that already ran the older
+-- version of this file, so re-running the migration is safe either way.
+drop index if exists public.aqua_kb_embedding_idx;
 
 alter table public.aqua_kb enable row level security;
 
