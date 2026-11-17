@@ -1479,3 +1479,13 @@ exact version in code would have gone stale before merge.
   embedding+DB call, result formatting, query-length clamp) — `search_kb()`
   itself (app.py) stays untested directly, consistent with this project's
   existing rule that `dashboard/app.py` is never imported in tests.
+* **2026-11-17 (later) — RAG verified live.** Ran `sql/11_knowledge_base.sql`
+  in the Supabase SQL editor and `tools/build_kb_embeddings.py` against the
+  real deploy, then asked `/ask` a spread of real questions covering every
+  FAQ topic (Wi-Fi reset, pet skin, sensor wiring, login lockout, the two
+  forecast models, the offline threshold), a couple of ordinary data
+  questions (latest reading, recent anomalies), and one off-topic question
+  (weather) to confirm the existing refusal behavior still holds. All
+  answered correctly from the knowledge base with a 資料來源 line naming
+  `search_manual`, and the pre-existing data tools were unaffected. Closes
+  the one unchecked item in PR #198's test plan.
