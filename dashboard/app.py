@@ -1680,9 +1680,19 @@ async def ask_page() -> None:
     @ui.refreshable
     def chat_log() -> None:
         if not state["messages"]:
-            ui.label(
-                "試試問：「最新溫度是多少？」「昨天最高溫幾度？」「過去24小時有沒有異常？」「接下來的預測？」"
-            ).classes("text-sm text-gray-400 italic")
+            # Two example groups so a first-time visitor sees /ask can answer
+            # both live-data questions (query tools) and how-to questions
+            # (search_manual over the FAQ knowledge base). Every how-to
+            # example below has a matching entry in tools/kb_content.py.
+            with ui.column().classes("gap-1"):
+                ui.label("可查數據：").classes("text-sm text-gray-500")
+                ui.label(
+                    "「最新溫度是多少？」「昨天最高溫幾度？」「過去24小時有沒有異常？」「接下來的預測？」"
+                ).classes("text-sm text-gray-400 italic")
+                ui.label("可問使用方式：").classes("text-sm text-gray-500 mt-2")
+                ui.label(
+                    "「怎麼重設 Wi-Fi？」「LINE 通知怎麼設定？」「登入被鎖住怎麼辦？」"
+                ).classes("text-sm text-gray-400 italic")
         for m in state["messages"]:
             is_user = m["role"] == "user"
             with ui.row().classes("w-full " + ("justify-end" if is_user else "justify-start")):
@@ -1766,7 +1776,9 @@ async def ask_page() -> None:
                 # outlined: the default Quasar "standard" input is just a
                 # bottom border, easy to miss as a tappable field on mobile
                 # (user feedback from a live screenshot).
-                question_input = ui.input(placeholder="輸入問題…").classes("w-full")
+                question_input = ui.input(
+                    placeholder="輸入問題，例如「最新溫度是多少？」或「怎麼重設 Wi-Fi？」"
+                ).classes("w-full")
                 question_input.props(f"outlined dense maxlength={MAX_QUESTION_CHARS}")
 
                 # Nested here (not a sibling of gate_or_content) so it closes
@@ -1819,8 +1831,9 @@ async def ask_page() -> None:
     with ui.column().classes("w-full max-w-3xl mx-auto p-4 gap-3"):
         ui.label("AI 問答").classes("text-lg font-semibold")
         ui.label(
-            "用中文詢問感測資料，AI 會呼叫系統內建的唯讀查詢工具取得真實數值再回答，"
-            "並在回答最後附上資料來源，方便驗證。"
+            "用中文提問：可以查感測數據、異常警戒與 AI 預測（AI 會呼叫唯讀查詢工具取得真實數值），"
+            "也可以問系統的使用方式與故障排除（AI 會查內建的 FAQ 說明）。"
+            "回答最後會附上資料來源，方便驗證。"
         ).classes("text-xs text-gray-400")
         await gate_or_content()
 
