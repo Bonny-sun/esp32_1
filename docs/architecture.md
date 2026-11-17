@@ -1506,4 +1506,5 @@ exact version in code would have gone stale before merge.
   version would have silently brought the bug back). Re-add an index only if
   the table reaches hundreds of rows, with `lists` and `ivfflat.probes`
   re-tuned. **Lesson:** retrieval checks should use paraphrased questions and
-  assert on the row *count*, not just that an answer came back.
+  assert on the row *count*, not just that an answer came back. Full
+  write-up: `docs/incidents/2026-11-kb-ivfflat-index.md`.
