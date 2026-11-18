@@ -217,15 +217,31 @@ def _resolve_name(ticker: str) -> str:
 
 def _fetch_close_and_ma5(ticker: str):
     """Returns (latest close, 5-day moving average), or None if there's
-    not enough trading history — same as auto-stock-picker's own
-    fetch_close_and_ma5()."""
+    not enough trading history.
+
+    Found live (2026-11-19, a manual test run just after midnight Taipei
+    time — see docs/architecture.md's decision log): yfinance's `end`
+    date reaches one day past "today" on purpose (see below), and when
+    "today" hasn't actually traded yet (pre-market, or — as here — the
+    calendar day has only just begun), the row it returns for that date
+    has NaN OHLC values instead of simply being absent. Taking `.iloc[-1]`
+    on the raw frame (as auto-stock-picker's own fetch_close_and_ma5()
+    does, which this was ported from) then picks up that NaN row as "the
+    latest close" — and `nan < ma5`/`nan >= ma5` are BOTH False in Python,
+    so a genuine breach silently reads as "no alert" instead of erroring
+    out loudly. Fixed by dropping NaN rows before taking the latest close
+    and the 5-day average, so both always come from the last REAL trade,
+    whatever row index that ends up being."""
     end = datetime.today() + timedelta(days=1)
     start = end - timedelta(days=30)  # 30 calendar days, well over 5 trading days even with holidays
     df = yf.Ticker(ticker).history(start=start.strftime("%Y-%m-%d"), end=end.strftime("%Y-%m-%d"), auto_adjust=True)
-    if df.empty or len(df) < 5:
+    if df.empty:
         return None
-    close = float(df["Close"].iloc[-1])
-    ma5 = float(df["Close"].rolling(5).mean().iloc[-1])
+    closes = df["Close"].dropna()
+    if len(closes) < 5:
+        return None
+    close = float(closes.iloc[-1])
+    ma5 = float(closes.tail(5).mean())
     return close, ma5
 
 

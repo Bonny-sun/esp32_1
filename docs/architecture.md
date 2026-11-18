@@ -1776,3 +1776,33 @@ exact version in code would have gone stale before merge.
   worker's `worker/stock_alerts.py` isn't a silent surprise to anyone who
   opens that other repo in isolation later. Live behavior not yet
   separately confirmed from Render's own logs at the time of this entry.
+* **2026-11-19 — manual test caught a real bug: NaN close silently read
+  as "no alert".** User ran the new `python stock_alerts.py` CLI entry
+  point (just after midnight Taipei time) to test live. The push said all
+  6 tracked tickers were fine — but 2330 (台積電) was visibly well below
+  its 5-day MA on a live chart at the same moment (close 2175 vs MA5
+  2250). Terminal output showed why: every ticker printed
+  `close nan >= MA5 nan`.
+  Root cause: `_fetch_close_and_ma5()`'s `end` date is deliberately set
+  one day past "today" (`datetime.today() + timedelta(days=1)`, inherited
+  verbatim from auto-stock-picker's own `fetch_close_and_ma5()`) so
+  yfinance's exclusive `end` doesn't cut off today's own bar. But right
+  after midnight, "today" hasn't traded yet — and yfinance doesn't omit
+  that day's row, it returns one with NaN OHLC. Plain `.iloc[-1]` (what
+  both this port and the original auto-stock-picker script did) picks up
+  that NaN row as "the latest close". In Python, `nan < x` and `nan >= x`
+  are BOTH `False` — so the close<MA5 breach check silently resolved to
+  "not breached" instead of erroring loudly, exactly backwards from safe
+  failure. This is the same bug in the original script too (ported
+  verbatim); it likely goes unnoticed there only because its GitHub
+  Actions schedule always fires well after both the US/UTC day boundary
+  and Taipei market hours, never during this window.
+  Fixed `_fetch_close_and_ma5()` to `df["Close"].dropna()` before reading
+  the latest close and averaging the last 5 — so both values always come
+  from the last REAL trade, whatever row index that ends up being, not
+  whatever `.iloc[-1]` happens to be. 3 new tests in
+  `tests/test_stock_alerts.py` reproduce the exact trailing-NaN-row shape
+  seen live (mocking `yf.Ticker` directly, no real yfinance call) and
+  assert the breach is now caught correctly. 162/162 total, ruff clean.
+  Not yet re-verified live — the user will re-run the manual CLI entry
+  point once this is deployed.
