@@ -1767,3 +1767,12 @@ exact version in code would have gone stale before merge.
   TOKEN` set in the Render dashboard before this actually does anything;
   until then it's a no-op (same "missing env var = feature off" pattern
   as every other optional feature in this worker).
+* **2026-11-18 (later still)** — User set `STOCK_DATABASE_URL` and
+  `STOCK_LINE_CHANNEL_ACCESS_TOKEN` in the Render dashboard for
+  `aquaponics-ingest`, and added a cross-repo note in `auto-stock-picker`
+  itself (`scripts/check_price_alerts.py`'s header comment and
+  `.github/workflows/price_alert.yml`'s top) explaining that repo's
+  GitHub Actions schedule is now a backup, not the primary — so this
+  worker's `worker/stock_alerts.py` isn't a silent surprise to anyone who
+  opens that other repo in isolation later. Live behavior not yet
+  separately confirmed from Render's own logs at the time of this entry.
