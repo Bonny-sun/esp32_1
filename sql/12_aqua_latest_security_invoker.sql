@@ -1,0 +1,22 @@
+-- ===========================================================================
+--  12_aqua_latest_security_invoker.sql — fixes a Supabase Security Advisor
+--  "Security Definer View" finding on public.aqua_latest.
+--  Incremental migration. Run in the Supabase SQL editor. Re-runnable.
+--
+--  Views in Postgres run with the privileges of their OWNER (the role that
+--  created them — in Supabase that's a privileged role, not the querying
+--  anon/authenticated role) unless security_invoker is explicitly turned
+--  on. That means a view can silently bypass the RLS policies on the
+--  tables it reads, which is exactly what the advisor is flagging here.
+--
+--  aqua_latest (schema.sql, section 5) is a plain `distinct on` read over
+--  aqua_telemetry — no elevated privilege is actually needed for it. And
+--  aqua_telemetry's own RLS policy is already `for select to anon using
+--  (true)` (schema.sql, section 6), i.e. anon can already read every row
+--  directly — so switching this view to security_invoker changes nothing
+--  about what any caller can actually see; it just makes the view honest
+--  about running with the caller's own privileges instead of the owner's,
+--  which is what clears the advisor warning.
+-- ===========================================================================
+
+alter view public.aqua_latest set (security_invoker = true);
