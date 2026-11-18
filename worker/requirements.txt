@@ -10,7 +10,7 @@ certifi>=2026.10.19
 # job now runs inside this worker — see ingest.py's module docstring).
 pandas>=2.2
 numpy>=1.26
-scikit-learn>=1.4
+scikit-learn>=1.9.1
 
 # For worker/stock_alerts.py — a different app's (auto-stock-picker)
 # scheduled job, piggybacked on this worker for the same reason as the AI
