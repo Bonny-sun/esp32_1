@@ -36,6 +36,15 @@ services:
       # dashboard to keep the feature disabled.
       - key: LINE_CHANNEL_TOKEN
         sync: false
+      # optional: worker/stock_alerts.py — a DIFFERENT app's (auto-stock-
+      # picker) twice-daily price-alert job, piggybacked on this worker.
+      # Leave both unset to keep that feature disabled; see that file's
+      # own module docstring. STOCK_DATABASE_URL must be Supabase's
+      # connection-pooler string (IPv4), not the direct host.
+      - key: STOCK_DATABASE_URL
+        sync: false
+      - key: STOCK_LINE_CHANNEL_ACCESS_TOKEN
+        sync: false
 
   # ---- NiceGUI dashboard (paid instance; always-on, no cold start) ----
   - type: web

@@ -11,3 +11,9 @@ certifi>=2026.10.19
 pandas>=2.2
 numpy>=1.26
 scikit-learn>=1.4
+
+# For worker/stock_alerts.py — a different app's (auto-stock-picker)
+# scheduled job, piggybacked on this worker for the same reason as the AI
+# forecast job above. See that file's own module docstring.
+yfinance>=0.2.40
+psycopg2-binary>=2.9.9

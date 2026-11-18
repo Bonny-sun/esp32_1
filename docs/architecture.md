@@ -1719,3 +1719,51 @@ exact version in code would have gone stale before merge.
     actually depends on `match_aqua_kb`/pgvector) afterward, since this is
     the first time this project has moved an installed extension's schema
     and it can't be verified without a live DB connection.
+* **2026-11-18 (later still) — piggybacked a different app's scheduled
+  job onto this worker.** The user's separate `auto-stock-picker` repo
+  (github.com/Bonny-sun/auto-stock-picker — a stock watchlist/screener,
+  unrelated app, sharing this project's Supabase project for the free-
+  tier 2-project-cap reason already on record above) has its own
+  twice-daily "5日均線跌破警示" job, currently a GitHub Actions `schedule`
+  workflow — and that repo's own script comments already note it's
+  unreliable, in almost identical terms to the reason this worker's own
+  AI forecast job got moved off GitHub Actions earlier (see `ingest.py`'s
+  module docstring). Rather than pay for a second Render worker just to
+  get a reliable clock for that other app, ported the job's logic into
+  `worker/stock_alerts.py` and run it in its own thread inside this
+  already-paid, always-on worker (`threading.Thread(...).start()` in
+  `main()`, alongside the existing MQTT-loop thread and the main-thread
+  forecast loop).
+  Read the source repo's actual code before porting anything (not
+  assumed): `scripts/check_price_alerts.py`, `modules/database.py`.
+  Two things had to change, not just move:
+  - **DB connection**: that repo's own `DATABASE_URL` is the direct
+    `db.<ref>.supabase.co:5432` host (works fine from GitHub Actions
+    runners, which have outbound IPv6) — but this worker's own module
+    docstring already documents that Render has NO outbound IPv6, which
+    is exactly why this worker uses REST (supabase-py) for its own
+    tables instead of psycopg2. `stock_alerts.py` needs a NEW env var,
+    `STOCK_DATABASE_URL`, set to Supabase's connection-**pooler** string
+    (IPv4) instead — same fix pattern that docstring already names,
+    applied to a second codebase hitting the identical Render/IPv6 wall.
+  - **LINE token**: a separate `STOCK_LINE_CHANNEL_ACCESS_TOKEN`, not the
+    aquaponics system's own `LINE_CHANNEL_TOKEN` — two unrelated apps,
+    two different LINE Official Accounts, would otherwise cross-push to
+    the wrong audience.
+  Deliberately did NOT call that other app's `init_db()` (schema
+  migration) from here — this worker doesn't own the `watchlist`/
+  `alert_push_log` tables, so it only ever reads/writes rows, assuming
+  the schema already exists (it does, in production). Deliberately did
+  NOT disable the other repo's GitHub Actions workflow either — its own
+  `claim_alert_slot()`/`alert_push_log` dedup mechanism (which that
+  repo's own script comments show was already written anticipating
+  exactly this "add a second scheduler as backup" scenario) means a late
+  or coincident GitHub Actions firing costs one cheap DB row-insert
+  attempt, not a duplicate yfinance scan or a duplicate LINE push — kept
+  as a free backup rather than removed.
+  `worker/requirements.txt` gained `yfinance`, `psycopg2-binary`.
+  Not yet deployed/tested live at the time of this entry — needs
+  `STOCK_DATABASE_URL` (pooler string) and `STOCK_LINE_CHANNEL_ACCESS_
+  TOKEN` set in the Render dashboard before this actually does anything;
+  until then it's a no-op (same "missing env var = feature off" pattern
+  as every other optional feature in this worker).
