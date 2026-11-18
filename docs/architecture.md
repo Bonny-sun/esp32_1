@@ -1806,3 +1806,13 @@ exact version in code would have gone stale before merge.
   assert the breach is now caught correctly. 162/162 total, ruff clean.
   Not yet re-verified live — the user will re-run the manual CLI entry
   point once this is deployed.
+* **2026-11-19 (later)** — The same trailing-NaN-row bug (see entry just
+  above) is present in `auto-stock-picker`'s own, unported
+  `scripts/check_price_alerts.py` — it's where this worker's
+  `_fetch_close_and_ma5()` was originally copied from, and the bug was
+  copied along with it. Handed the user a plain-language bug
+  description (root cause, live repro evidence, why that repo's own
+  GitHub Actions schedule never happened to trigger it) to pass to that
+  repo for its own fix, without a ready-made patch — deliberately left
+  out of scope for this repo, since `auto-stock-picker` is a separate
+  project this repo doesn't own or maintain code in.
