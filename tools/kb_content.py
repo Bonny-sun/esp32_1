@@ -31,7 +31,8 @@ KB_ENTRIES: list[dict[str, str]] = [
         "title": "如何重新設定 Wi-Fi 或 MQTT 連線資訊",
         "content": (
             "裝置用 WiFiManager 做連線設定：重新開機後，在前 3 秒內按住 BOOT 鍵（GPIO0）不放，"
-            "就會強制開啟設定入口網頁（captive portal）。用手機或電腦連上裝置當下開啟的 Wi-Fi 熱點，"
+            "就會強制開啟設定入口網頁（captive portal）。用手機或電腦連上裝置當下開啟的 Wi-Fi 熱點"
+            "「AquaGuardian-Setup」（密碼 aquaguardian，也會顯示在 OLED 面板上），"
             "就能在網頁裡填寫新的 Wi-Fi 名稱密碼、MQTT 主機位址/帳密、裝置 ID，以及備用 Wi-Fi（選填）。"
             "不需要重新燒錄韌體，純粹是連線參數設定。"
         ),

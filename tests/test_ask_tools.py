@@ -447,22 +447,48 @@ def test_search_manual_empty_query_short_circuits_without_calling_search_kb():
     assert tools.search_manual("   ") == {"rows": 0, "results": []}
 
 
-def test_search_manual_passes_through_and_formats_results():
+def test_search_manual_formats_a_result_above_the_threshold():
     captured = {}
 
     def search_kb(query):
         captured["query"] = query
-        return [
-            {"title": "重新設定 Wi-Fi", "content": "按住 BOOT 鍵...", "similarity": 0.91234},
-            {"title": "OLED 故障排除", "content": "檢查排線...", "similarity": 0.5},
-        ]
+        return [{"title": "重新設定 Wi-Fi", "content": "按住 BOOT 鍵...", "similarity": 0.91234}]
 
     tools = make_tools(search_kb=search_kb)
     out = tools.search_manual("怎麼重設網路")
 
     assert captured["query"] == "怎麼重設網路"
-    assert out["rows"] == 2
+    assert out["rows"] == 1
     assert out["results"][0] == {"title": "重新設定 Wi-Fi", "content": "按住 BOOT 鍵...", "similarity": 0.912}
+
+
+def test_search_manual_filters_out_rows_below_the_similarity_threshold():
+    """match_aqua_kb has no WHERE clause — it always returns `match_count`
+    rows regardless of relevance, so search_manual must drop the ones that
+    aren't actually close enough (SIMILARITY_THRESHOLD, measured live
+    against the real corpus — see that constant's own comment)."""
+    rows = [
+        {"title": "重新設定 Wi-Fi", "content": "按住 BOOT 鍵...", "similarity": 0.91},  # keep
+        {"title": "虛擬寵物造型", "content": "...", "similarity": 0.70},  # keep: exactly at threshold
+        {"title": "OLED 故障排除", "content": "檢查排線...", "similarity": 0.66},  # drop
+        {"title": "登入限流", "content": "...", "similarity": 0.5},  # drop
+    ]
+    tools = make_tools(search_kb=lambda query: rows)
+    out = tools.search_manual("今天天氣如何")
+
+    assert out["rows"] == 2
+    assert {r["title"] for r in out["results"]} == {"重新設定 Wi-Fi", "虛擬寵物造型"}
+
+
+def test_search_manual_all_below_threshold_reports_zero_rows_with_a_note():
+    rows = [
+        {"title": "OLED 故障排除", "content": "檢查排線...", "similarity": 0.66},
+        {"title": "登入限流", "content": "...", "similarity": 0.63},
+    ]
+    tools = make_tools(search_kb=lambda query: rows)
+    out = tools.search_manual("今天天氣如何")
+
+    assert out == {"rows": 0, "results": [], "note": "知識庫沒有相關資訊"}
 
 
 def test_search_manual_truncates_an_overlong_query():
@@ -477,6 +503,6 @@ def test_search_manual_truncates_an_overlong_query():
     assert len(captured["query"]) == 300
 
 
-def test_search_manual_no_results_reports_zero_rows():
+def test_search_manual_no_results_reports_zero_rows_with_a_note():
     tools = make_tools(search_kb=lambda query: [])
-    assert tools.search_manual("找不到的問題") == {"rows": 0, "results": []}
+    assert tools.search_manual("找不到的問題") == {"rows": 0, "results": [], "note": "知識庫沒有相關資訊"}

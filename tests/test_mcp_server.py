@@ -64,6 +64,42 @@ def test_build_mcp_server_tool_call_dispatches_to_the_real_method():
     assert "08:00 (Asia/Taipei)" in result.content[0].text
 
 
+def test_build_mcp_server_every_tool_is_marked_read_only():
+    """Every one of these 7 tools is a pure Supabase read — tools/list must
+    say so via the MCP spec's own annotation fields, not leave a client to
+    guess whether a call is safe to repeat or could change something."""
+    server = build_mcp_server(make_tools())
+    tools = asyncio.run(server.list_tools())
+    assert len(tools) == len(TOOL_SCHEMAS)
+    for tool in tools:
+        assert tool.annotations is not None, f"{tool.name} has no annotations"
+        assert tool.annotations.read_only_hint is True
+        assert tool.annotations.destructive_hint is False
+        assert tool.annotations.idempotent_hint is True
+        assert tool.annotations.open_world_hint is False
+
+
+# ------------------------------------------------------- isError on a known error
+
+def test_known_errors_are_reported_as_is_error_with_the_original_message():
+    """AskTools itself never raises (by design — see its own module
+    docstring) — {"error": "..."} is a normal, successful Python return
+    value that /ask's Gemini loop depends on unchanged. Only the MCP layer
+    translates that into isError=True, and the content text must be
+    exactly AskTools' own message, not the SDK's generic "Error executing
+    tool <name>: ..." wrapper (see mcp_server.py's docstring for why
+    raising an exception can't give you that)."""
+    server = build_mcp_server(make_tools())
+
+    r1 = asyncio.run(server.call_tool("get_latest", {"device_id": "no-such-device"}))
+    assert r1.is_error is True
+    assert r1.content[0].text == "unknown device_id 'no-such-device'; call list_devices for valid ids"
+
+    r2 = asyncio.run(server.call_tool("get_stats", {"device_id": "esp32-aqua-01", "metric": "pressure", "hours": 24}))
+    assert r2.is_error is True
+    assert r2.content[0].text == "invalid metric 'pressure'; must be one of ['temperature', 'humidity']"
+
+
 # ---------------------------------------------------------------- RequireApiKey
 
 class _Recorder:
