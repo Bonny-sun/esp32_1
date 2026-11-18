@@ -62,6 +62,34 @@ even notice the breakage.
      doesn't have, say so explicitly and confirm the underlying tables are
      still protected by their own RLS rather than relying on the view as
      the only gate.
+   - **Function Search Path Mutable**: a function with no `SET
+     search_path` resolves any unqualified object name using whatever
+     search_path the *caller's session* happens to have, not a fixed one
+     — exploitable by anyone who can create an object in a schema earlier
+     in that path. Read the function's actual body before picking a fix:
+     if every object reference inside it is already schema-qualified
+     (`public.aqua_*`, as all of this project's functions normally are —
+     check, don't assume), lock it to an **empty** search_path
+     (`alter function public.fn(args) set search_path = '';`) — the
+     strictest option. If the body uses an extension's operator/type
+     unqualified (pgvector's `<=>`, `vector`), an empty path will break
+     it — pin to whichever schema(s) it actually needs instead (e.g.
+     `public` or `extensions`, see below), which still closes the finding
+     because the path is now fixed and caller-independent, just not
+     empty.
+   - **Extension in Public**: an extension installed with no `SCHEMA`
+     clause lands in `public` by default, mixing its objects into the
+     same schema `anon`/`authenticated` already read from. Supabase
+     projects ship a dedicated `extensions` schema for this — move it
+     there: `create schema if not exists extensions; alter extension
+     <name> set schema extensions;`. This only relocates the extension's
+     own objects; a table column using one of its types keeps working
+     unchanged (Postgres tracks a column's type by OID, not by
+     schema-qualified name). Any function that uses that extension's
+     operators/types unqualified needs `extensions` added to its own
+     `search_path` afterward (see the Function Search Path fix above) —
+     do both in the same migration, not separately, so there's no window
+     where the function is broken.
 
 3. **Write the fix as a new numbered file** following the existing
    `sql/0N_description.sql` sequence (re-runnable, header comment
