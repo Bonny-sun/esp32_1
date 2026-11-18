@@ -104,6 +104,25 @@ def test_cycle_skips_when_slot_already_claimed(monkeypatch):
     stock_alerts.run_stock_alert_cycle()  # must not raise, must not scan
 
 
+def test_cycle_with_dedup_false_never_claims_a_slot(monkeypatch):
+    """The manual-test CLI path (dedup=False) must never touch
+    _claim_alert_slot at all — claiming today's slot from a manual test
+    run would make the REAL 09:13/12:13 scheduled run think it already
+    fired and skip itself."""
+    monkeypatch.setattr(stock_alerts, "STOCK_DATABASE_URL", "postgresql://x")
+    monkeypatch.setattr(stock_alerts, "STOCK_LINE_TOKEN", "tok")
+
+    def boom(*_a, **_k):
+        raise AssertionError("dedup=False must not call _claim_alert_slot")
+
+    monkeypatch.setattr(stock_alerts, "_claim_alert_slot", boom)
+    monkeypatch.setattr(stock_alerts, "_fetch_watchlist_with_buy_price", lambda: [])
+    sent = []
+    monkeypatch.setattr(stock_alerts, "_send_line_message", lambda text: sent.append(text))
+    stock_alerts.run_stock_alert_cycle(dedup=False)
+    assert len(sent) == 1
+
+
 def test_cycle_pushes_no_watchlist_message_when_nothing_tracked(monkeypatch):
     monkeypatch.setattr(stock_alerts, "STOCK_DATABASE_URL", "postgresql://x")
     monkeypatch.setattr(stock_alerts, "STOCK_LINE_TOKEN", "tok")

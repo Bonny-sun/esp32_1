@@ -74,6 +74,19 @@ from datetime import datetime, timedelta, timezone
 import requests
 import yfinance as yf
 
+# Same local-testing-only .env loader as ingest.py's own 【1-1】 — a no-op
+# in production (Render injects real env vars, no .env file there), but
+# needed here too so `python stock_alerts.py` works standalone for a
+# manual test (see the __main__ block at the bottom of this file), not
+# only when imported by ingest.py (which already loads .env before this
+# module is imported — calling it again here is harmless).
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv()
+except ImportError:
+    pass
+
 STOCK_DATABASE_URL = os.environ.get("STOCK_DATABASE_URL", "")
 STOCK_LINE_TOKEN = os.environ.get("STOCK_LINE_CHANNEL_ACCESS_TOKEN", "")
 
@@ -256,7 +269,7 @@ def _send_line_message(text: str) -> None:
     resp.raise_for_status()
 
 
-def run_stock_alert_cycle() -> None:
+def run_stock_alert_cycle(*, dedup: bool = True) -> None:
     """One pass: claim this Taipei morning/noon slot, scan the watchlist,
     push one LINE message. A backup source (auto-stock-picker's own
     GitHub Actions workflow) firing for the same slot — before, after, or
@@ -267,15 +280,27 @@ def run_stock_alert_cycle() -> None:
 
     Never raises — the caller (run_stock_alert_loop(), or whatever runs
     this inside ingest.py's own worker loop) must never let a stock-side
-    failure take down this process's actual job, MQTT ingest."""
+    failure take down this process's actual job, MQTT ingest.
+
+    `dedup=False` skips the slot-claim entirely — same as auto-stock-
+    picker's own check_price_alerts.py only claiming a slot when
+    PRICE_ALERT_DEDUP=1 (set only for its real GitHub Actions `schedule`
+    trigger, never for a manual `workflow_dispatch` run). Used by this
+    module's own `python stock_alerts.py` CLI entry point below, so a
+    manual test run neither consumes today's slot (which would make the
+    REAL scheduled run at 09:13/12:13 skip itself, thinking it already
+    fired) nor gets blocked by a slot a real run already claimed."""
     if not STOCK_DATABASE_URL or not STOCK_LINE_TOKEN:
         return
 
-    slot_date, slot_name = _taipei_slot()
-    if not _claim_alert_slot(slot_date, slot_name, "esp32_1_worker"):
-        print(f"[stock-alert] {slot_date} {slot_name} already claimed by another source, skipping", flush=True)
-        return
-    print(f"[stock-alert] claimed {slot_date} {slot_name}", flush=True)
+    if dedup:
+        slot_date, slot_name = _taipei_slot()
+        if not _claim_alert_slot(slot_date, slot_name, "esp32_1_worker"):
+            print(f"[stock-alert] {slot_date} {slot_name} already claimed by another source, skipping", flush=True)
+            return
+        print(f"[stock-alert] claimed {slot_date} {slot_name}", flush=True)
+    else:
+        print("[stock-alert] manual run (dedup bypassed, not claiming a slot)", flush=True)
 
     watchlist_rows = _fetch_watchlist_with_buy_price()
     if not watchlist_rows:
@@ -351,3 +376,13 @@ def run_stock_alert_loop(
             except Exception as exc:              # noqa: BLE001 - must never kill the worker
                 print(f"[stock-alert] cycle failed: {exc}", flush=True)
         sleep(60)
+
+
+# Lets this be run standalone for a manual test (e.g. locally, with
+# STOCK_DATABASE_URL/STOCK_LINE_CHANNEL_ACCESS_TOKEN set in the shell),
+# without waiting for 09:13/12:13 Taipei — same manual-run purpose as
+# auto-stock-picker's own "python scripts/check_price_alerts.py". Not used
+# by ingest.py, which calls run_stock_alert_loop()/run_stock_alert_cycle()
+# directly as a library, not as a subprocess.
+if __name__ == "__main__":
+    run_stock_alert_cycle(dedup=False)
