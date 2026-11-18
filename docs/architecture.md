@@ -1646,3 +1646,16 @@ exact version in code would have gone stale before merge.
   `tests/test_mcp_server.py`: every tool's annotations, `isError` with the
   exact original message on two different error shapes). 144/144 total,
   ruff clean.
+* **2026-11-18** — **Backlog (not implemented yet)**: tested asking `/ask`
+  "裝置的溫溼度警戒值是多少" (what are the device's temp/humidity alert
+  thresholds) — no tool can answer this. The existing tool set (`list_devices`,
+  `get_latest`, `get_stats`, `get_daily_stats`, `get_anomalies`, `get_forecast`,
+  `search_manual`) covers live readings, stats, anomaly history, forecasts,
+  and the FAQ, but none reads the *currently configured* threshold values
+  stored per device (`/admin`'s 警戒門檻設定, written via MQTT retained
+  config) — `search_manual` can only surface the FAQ entry on *how* to
+  change them, not the live numbers. Not a bug in this round's fixes; a gap
+  in what the tool set was ever designed to cover. If wanted later: a
+  read-only `get_thresholds(device_id)` tool in `ask/tools.py`, registered
+  in `TOOL_SCHEMAS` the same way as the other 7 so both `/ask` and the MCP
+  server pick it up automatically.
