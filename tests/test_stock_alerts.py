@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+import pandas as pd
 import pytest
 import stock_alerts
 
@@ -63,6 +64,55 @@ def test_taipei_slot_after_11_is_noon(monkeypatch):
 def test_ticker_code_strips_tw_and_two_suffixes():
     assert stock_alerts._ticker_code("2330.TW") == "2330"
     assert stock_alerts._ticker_code("6523.TWO") == "6523"
+
+
+# ============================================================================
+# _fetch_close_and_ma5 — must ignore a trailing not-yet-traded row
+# ============================================================================
+
+class _FakeYfTicker:
+    """Stand-in for yfinance's Ticker, whose .history() just returns
+    whatever DataFrame the test hands it."""
+
+    def __init__(self, df):
+        self._df = df
+
+    def history(self, **_kwargs):
+        return self._df
+
+
+def test_fetch_close_and_ma5_ignores_a_trailing_nan_row(monkeypatch):
+    """Found live 2026-11-19: yfinance's `end` date deliberately reaches
+    one day past "today" (see _fetch_close_and_ma5's own docstring), and
+    when "today" hasn't actually traded yet, the row it returns for that
+    date has NaN OHLC instead of being absent — plain `.iloc[-1]` then
+    picks up that NaN row as "the latest close", and `nan < x`/`nan >= x`
+    are both False, so a real 5-day-MA breach silently read as "no
+    alert". This DataFrame (6 real closes, trailing NaN "today" row)
+    reproduces exactly that shape."""
+    closes = [100.0, 98.0, 95.0, 90.0, 85.0, 80.0, float("nan")]
+    df = pd.DataFrame({"Close": closes})
+    monkeypatch.setattr(stock_alerts.yf, "Ticker", lambda _ticker: _FakeYfTicker(df))
+
+    result = stock_alerts._fetch_close_and_ma5("2330.TW")
+
+    assert result is not None
+    close, ma5 = result
+    assert close == 80.0  # last REAL close, not the trailing NaN row
+    assert ma5 == pytest.approx((95.0 + 90.0 + 85.0 + 80.0 + 98.0) / 5)
+    assert close < ma5  # the actual breach, which the NaN bug was masking
+
+
+def test_fetch_close_and_ma5_returns_none_with_fewer_than_5_real_closes(monkeypatch):
+    df = pd.DataFrame({"Close": [100.0, 98.0, 95.0, float("nan")]})
+    monkeypatch.setattr(stock_alerts.yf, "Ticker", lambda _ticker: _FakeYfTicker(df))
+    assert stock_alerts._fetch_close_and_ma5("2330.TW") is None
+
+
+def test_fetch_close_and_ma5_returns_none_for_an_empty_frame(monkeypatch):
+    df = pd.DataFrame({"Close": []})
+    monkeypatch.setattr(stock_alerts.yf, "Ticker", lambda _ticker: _FakeYfTicker(df))
+    assert stock_alerts._fetch_close_and_ma5("2330.TW") is None
 
 
 # ============================================================================
