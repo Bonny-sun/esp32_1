@@ -18,7 +18,8 @@
                           【4-3】寫入資料庫   【4-4】檢查警戒、推 LINE
   五、MQTT 連線事件       【5-1】連上後訂閱   【5-2】斷線   【5-3】收到訊息
   六、AI 預測排程         【6-1】跑一次預測   【6-2】每 30 分鐘重複
-  七、程式入口 main()     【7-1】建立 MQTT client   【7-2】連線並啟動兩條工作線
+  七、程式入口 main()     【7-1】建立 MQTT client
+                          【7-2】連線並啟動三條工作線(MQTT／股票警示／AI預測)
 
 備註：
   多存一個感測欄位 ........ 【4-2】(另外還要改資料庫 sql/ 與前端)
@@ -26,6 +27,7 @@
   新增/改指標中文名稱 ...... 【1-3】
   改預測頻率 .............. 【6-2】的 FORECAST_INTERVAL_S
   改 MQTT 訂閱主題 ......... 【1-2】的 MQTT_TOPIC
+  股票警示（另一個 app）... stock_alerts.py，獨立檔案，見該檔案自己的說明
 
 ╚════════════════════════════════════════════════════════════════════════════╝
 
@@ -67,6 +69,15 @@ ticks (runs meant to be 30 min apart were landing 3-8h apart in practice).
 This worker is already paid-for and already running continuously for MQTT,
 so piggybacking the forecast job on it costs nothing extra and isn't at the
 mercy of an external scheduler.
+
+Also runs a SEPARATE app's scheduled job in its own thread: the user's
+`auto-stock-picker` repo's twice-daily "5日均線跌破警示" check, for the
+exact same reason as the forecast job above (that repo's own GitHub
+Actions schedule was unreliable, and this worker is already paid-for and
+already running) — see worker/stock_alerts.py's own module docstring for
+the full design (it's a ported copy of that other repo's logic, not an
+import; has its own separate DB connection and LINE token; silently
+disabled if its env vars aren't set).
 """
 from __future__ import annotations
 
@@ -74,6 +85,7 @@ import json
 import os
 import ssl
 import sys
+import threading
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -84,6 +96,7 @@ from supabase import create_client
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "analysis"))
 import baseline  # noqa: E402
+import stock_alerts  # noqa: E402
 
 # ============================================================================
 # 一、設定與常數：程式啟動時先把「連去哪、用什麼帳密」準備好
@@ -397,9 +410,10 @@ def run_forecast_loop(*, interval: float = FORECAST_INTERVAL_S, sleep=time.sleep
 # ============================================================================
 def main() -> int:
     # 開機流程：建立 MQTT client -> 設定帳密/TLS -> 掛上 callback -> 連線 ->
-    # 背景執行緒跑 MQTT 網路迴圈(loop_start)-> 主執行緒跑 AI 預測排程
-    # (run_forecast_loop,每30分鐘一次,見上方)，往後每筆 MQTT 訊息都觸發
-    # on_message -> handle_payload()。
+    # 背景執行緒跑 MQTT 網路迴圈(loop_start) -> 另一條背景執行緒跑股票警示
+    # 排程(stock_alerts.run_stock_alert_loop,平日約9:13/12:13,見該檔案) ->
+    # 主執行緒跑 AI 預測排程(run_forecast_loop,每30分鐘一次,見上方)，往後
+    # 每筆 MQTT 訊息都觸發 on_message -> handle_payload()。
     # ---- 【7-1】建立 MQTT client：設定帳密、TLS 加密、掛上第五項的三個事件函式 ----
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="render-ingest")
     client.username_pw_set(MQTT_USER, MQTT_PASS)
@@ -409,10 +423,11 @@ def main() -> int:
     client.on_message = on_message
     client.reconnect_delay_set(min_delay=1, max_delay=60)
 
-    # ---- 【7-2】連線並啟動兩條工作線：背景線收資料、主線跑預測排程 ----
+    # ---- 【7-2】連線並啟動三條工作線：MQTT 收資料、股票警示排程、AI 預測排程 ----
     print(f"[boot] connecting to {MQTT_HOST}:{MQTT_PORT}", flush=True)
     client.connect(MQTT_HOST, MQTT_PORT, keepalive=45)
     client.loop_start()                   # MQTT network loop in its own thread
+    threading.Thread(target=stock_alerts.run_stock_alert_loop, daemon=True).start()
     print(f"[boot] forecast cycle every {FORECAST_INTERVAL_S}s, starting now", flush=True)
     run_forecast_loop()                   # blocks the main thread forever
     return 0
