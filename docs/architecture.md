@@ -1659,3 +1659,63 @@ exact version in code would have gone stale before merge.
   read-only `get_thresholds(device_id)` tool in `ask/tools.py`, registered
   in `TOOL_SCHEMAS` the same way as the other 7 so both `/ask` and the MCP
   server pick it up automatically.
+* **2026-11-18** — **Supabase Security Advisor findings triaged.** The
+  Supabase project backing this app is literally named `auto-stock-picker`
+  — it's the user's pre-existing, unrelated stock-picker app's project,
+  reused here (free tier's 2-project cap) with the `aqua_` table prefix as
+  the only isolation (see schema.sql's own "Shared-DB-safe" header
+  comment). So when the advisor flagged `RLS Disabled in Public` on
+  `alert_push`/`watchlist`/`appearance`, checked this repo first rather
+  than guess: none of those three names appear anywhere in this codebase,
+  confirming they belong to the other app, not this one. Wrote no RLS
+  policy for them — guessing a schema/ownership model for tables this repo
+  can't see would risk writing an actively wrong policy (locking out that
+  app's real users, or worse, an `auth.uid()`-based policy that silently
+  passes everything because that app turned out not to use Supabase Auth
+  at all — `watchlist.username` is a plain `text` column, not a
+  Supabase-Auth `uuid`). User fixed those three directly in the
+  stock-picker project.
+  The one finding that *was* this repo's: `Security Definer View` on
+  `aqua_latest`. Root cause: Postgres views run with their owner's
+  privileges by default, bypassing the underlying table's RLS, unless
+  `security_invoker` is turned on. Checked whether `aqua_latest` actually
+  needs that elevated privilege — it doesn't (it's a plain `distinct on`
+  over `aqua_telemetry`, and `aqua_telemetry`'s own RLS already lets `anon`
+  read every row), so the fix changes nothing about what's visible, only
+  which privilege level does the reading. Fix in
+  `sql/12_aqua_latest_security_invoker.sql`.
+  General lesson captured as a project skill
+  (`.claude/skills/supabase-security-triage/SKILL.md`) so a future advisor
+  alert gets the same "check which tables are actually this repo's before
+  writing any policy" triage automatically.
+* **2026-11-18 (later)** — **Second Security Advisor pass**: 6 more
+  warnings, all `aqua_*` or pgvector-related — confirmed every one is this
+  repo's this time (no repeat of the shared-project guessing problem).
+  - **Function Search Path Mutable** (5x): `aqua_rollup_hourly`,
+    `aqua_prune_raw`, `aqua_check_thresholds`, `aqua_prune_auth_log`,
+    `match_aqua_kb` all had no `SET search_path` — meaning each resolved
+    unqualified object names using whatever search_path the *calling*
+    session had, not a fixed one. Read each function's actual body before
+    deciding the fix (not assumed): the first four fully-qualify every
+    table reference already (`public.aqua_*`), so they're locked to an
+    **empty** search_path — the strictest option, nothing unqualified can
+    resolve, and nothing in their bodies needs to. `match_aqua_kb` is
+    different — it uses pgvector's `<=>` operator and `vector` type
+    unqualified — so it needs `public`/`extensions` still in its path;
+    see the extension fix below for why.
+  - **Extension in Public**: pgvector (`sql/11_knowledge_base.sql`) was
+    installed into `public` with no SCHEMA clause, Postgres/Supabase's
+    default. Moved it to Supabase's standard `extensions` schema instead
+    (`alter extension vector set schema extensions;`) — this only
+    relocates pgvector's own objects; `aqua_kb.embedding`'s column type is
+    tracked by OID internally, not by schema-qualified name, so the table
+    itself is unaffected, and `match_aqua_kb()` itself stays in `public`
+    (PostgREST only exposes RPCs from there). Updated its search_path to
+    `extensions, public, pg_catalog` to match where pgvector's operator now
+    lives.
+  - Fix in `sql/13_function_search_path.sql`. Not yet applied against the
+    live DB at the time of this entry — needs the user to run it in the
+    SQL editor and re-test `/ask`'s `search_manual` (the one feature that
+    actually depends on `match_aqua_kb`/pgvector) afterward, since this is
+    the first time this project has moved an installed extension's schema
+    and it can't be verified without a live DB connection.
