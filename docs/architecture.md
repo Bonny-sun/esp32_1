@@ -1816,3 +1816,30 @@ exact version in code would have gone stale before merge.
   repo for its own fix, without a ready-made patch — deliberately left
   out of scope for this repo, since `auto-stock-picker` is a separate
   project this repo doesn't own or maintain code in.
+* **2026-11-25 — TODO before 2026-12-31: HiveMQ Cloud Serverless is
+  retiring.** HiveMQ's own email (both the initial notice and today's
+  reminder) confirms **HiveMQ Cloud Serverless — the MQTT broker this
+  entire system depends on (see § 3 above) — is being retired 2026-12-31**.
+  After that date devices can no longer connect at all, and shortly after,
+  cluster data is permanently deleted. Not urgent yet (~5 weeks of runway
+  from this entry's date) but needs to happen before year-end, not left
+  to the last minute.
+  Plan, not yet started:
+  1. User signs up for HiveMQ's free "Migration package" (100
+     connections / 100 msg/s for 12 months, then rolls onto their free
+     Lab plan afterward) — this project's actual usage (1 device, one
+     MQTT message every 2 minutes) is nowhere near that cap, so the paid
+     Launch/Enterprise tiers HiveMQ also offers aren't needed. This step
+     has to be done by the user directly in their own HiveMQ account —
+     not something this session can do on their behalf.
+  2. Once the user has the new cluster's host/credentials, update
+     `MQTT_HOST`/`MQTT_USER`/`MQTT_PASS` on Render for both
+     `aquaponics-ingest` (the worker that actually subscribes) and
+     `aquaponics-dashboard` (which also holds the same MQTT creds to
+     publish pet-skin commands — see render.yaml's own comment on that).
+  3. Point the ESP32 device at the new broker. No reflash needed — the
+     existing WiFiManager captive-portal flow (hold BOOT 3s after reset)
+     already exists for exactly this: re-enter new Wi-Fi/MQTT connection
+     details on-device.
+  Migration guide HiveMQ linked:
+  https://docs.hivemq.com/hivemq-cloud/serverless-end-of-life.html#move-workloads
